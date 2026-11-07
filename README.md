@@ -28,7 +28,6 @@ ai-kit status          # 查看状态
 ```json
 {
   "defaultEngine": "claude",
-  "skillsDir": "~/Documents/你的skills仓库",
   "apiKey": "sk-xxx",
   "anthropic": { "baseUrl": "https://..." },
   "openai": { "baseUrl": "https://..." },
@@ -40,7 +39,7 @@ ai-kit status          # 查看状态
 
 - `apiKey` 公用；`anthropic` 地址给 claude/zcode，`openai` 地址给 codex
 - 模型跟引擎走：仅 claude 有 `smallModel`（对应 `ANTHROPIC_SMALL_FAST_MODEL`）
-- `skillsDir` 指向独立 skills git 仓库，启动时自动 pull + 软链到 `~/{.claude,.codex,.zcode}/skills/`
+- skill 放仓库 `skills/` 文件夹即可（默认自动读取）；想用外部仓库就填 `skillsDir`，启动时自动 pull + 软链到 `~/{.claude,.codex,.zcode}/skills/`
 
 ## 写入位置
 
