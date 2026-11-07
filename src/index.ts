@@ -34,9 +34,13 @@ const ENGINE_PROTOCOL: Record<Engine, Protocol> = {
   codex: "openai",
 };
 
-interface Endpoint {
+interface ProtocolEndpoint {
   baseUrl: string;
+}
+
+interface EngineModel {
   model: string;
+  /** 仅 Claude Code 有小模型（ANTHROPIC_SMALL_FAST_MODEL） */
   smallModel?: string;
 }
 
@@ -44,8 +48,13 @@ interface Config {
   defaultEngine: Engine;
   apiKey: string;
   skillsDir?: string;
-  anthropic: Endpoint;
-  openai: Endpoint;
+  /** 两个协议的 baseUrl：anthropic 给 claude/zcode，openai 给 codex */
+  anthropic: ProtocolEndpoint;
+  openai: ProtocolEndpoint;
+  /** 各引擎自己的模型：claude 主+小，其他单模型 */
+  claude: EngineModel;
+  codex: EngineModel;
+  zcode: EngineModel;
   /** 内部状态：alias 是否已询问/安装 */
   aliasInstalled?: boolean;
 }
@@ -59,7 +68,7 @@ interface Adapter {
   pkg?: string;
   installed: () => boolean;
   install: () => Promise<void>;
-  applyConfig: (engine: Engine, ep: Endpoint, apiKey: string) => Promise<void>;
+  applyConfig: (engine: Engine, ep: { baseUrl: string; model: string; smallModel?: string }, apiKey: string) => Promise<void>;
   skillsDir: () => string;
 }
 
@@ -175,18 +184,22 @@ function saveConfig(cfg: Config) {
   writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2) + "\n");
 }
 
-function resolveEndpoint(cfg: Config, engine: Engine): { ep: Endpoint; apiKey: string } {
-  const proto = ENGINE_PROTOCOL[engine];
-  const ep = cfg[proto];
-  if (!ep?.baseUrl) {
-    console.error(`config.json 里没有配置 ${proto} 协议的 baseUrl（引擎 ${engine} 需要 ${proto} 协议），请编辑 ${CONFIG_PATH}`);
+function resolveEndpoint(cfg: Config, engine: Engine): { ep: { baseUrl: string; model: string; smallModel?: string }; apiKey: string } {
+  const baseUrl = cfg[ENGINE_PROTOCOL[engine]]?.baseUrl;
+  if (!baseUrl) {
+    console.error(`config.json 里没有配置 ${ENGINE_PROTOCOL[engine]} 协议的 baseUrl（引擎 ${engine} 需要），请编辑 ${CONFIG_PATH}`);
+    process.exit(1);
+  }
+  const em = cfg[engine];
+  if (!em?.model) {
+    console.error(`config.json 里没有配置 ${engine} 的 model，请编辑 ${CONFIG_PATH}`);
     process.exit(1);
   }
   if (!cfg.apiKey) {
     console.error(`config.json 里没有 apiKey，请编辑 ${CONFIG_PATH}`);
     process.exit(1);
   }
-  return { ep, apiKey: cfg.apiKey };
+  return { ep: { baseUrl, model: em.model, smallModel: em.smallModel }, apiKey: cfg.apiKey };
 }
 
 /** skills 来源：config.skillsDir 指向用户独立的 skills 仓库 */
@@ -356,11 +369,11 @@ async function status() {
     const ok = a.installed();
     let extra = "";
     if (cfg) {
-      try { extra = `  ${resolveEndpoint(cfg, e).ep.model}`; } catch { extra = "  ⚠ provider 未配置"; }
+      try { extra = `  ${resolveEndpoint(cfg, e).ep.model}`; } catch { extra = "  ⚠ 配置不全"; }
     }
     console.log(`${ok ? "●" : "○"} ${e.padEnd(7)} ${ok ? "已安装" : "未安装"}${extra}${cfg?.defaultEngine === e ? "  ← 默认" : ""}`);
   }
-  console.log(`\nconfig: ${CONFIG_PATH}${cfg?.anthropic ? `  anthropic: ${cfg.anthropic.model}` : ""}${cfg?.openai ? `  openai: ${cfg.openai.model}` : ""}`);
+  console.log(`\nconfig: ${CONFIG_PATH}${cfg?.claude ? `  claude: ${cfg.claude.model}${cfg.claude.smallModel ? '+' + cfg.claude.smallModel : ''}` : ""}${cfg?.codex ? `  codex: ${cfg.codex.model}` : ""}${cfg?.zcode ? `  zcode: ${cfg.zcode.model}` : ""}`);
   const src = skillsSrc(cfg);
   console.log(`skills: ${src ?? "未配置 skillsDir"}${src && existsSync(src) ? ` (${readdirSync(src).filter(n => existsSync(join(src, n, "SKILL.md"))).length} 个)` : ""}`);
 }

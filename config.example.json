@@ -1,13 +1,21 @@
 {
   "defaultEngine": "claude",
+  "skillsDir": "~/Documents/你的skills仓库",
   "apiKey": "在这里填你的 API Key",
   "anthropic": {
-    "baseUrl": "https://你的anthropic兼容地址",
+    "baseUrl": "https://你的anthropic兼容地址"
+  },
+  "openai": {
+    "baseUrl": "https://你的openai兼容地址"
+  },
+  "claude": {
     "model": "claude-sonnet-4-5",
     "smallModel": "claude-haiku-4-5"
   },
-  "openai": {
-    "baseUrl": "https://你的openai兼容地址",
+  "codex": {
     "model": "gpt-5-codex"
+  },
+  "zcode": {
+    "model": "glm-4.7"
   }
 }

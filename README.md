@@ -20,24 +20,25 @@ ai-kit start claude    # 跳过菜单直接启动指定引擎
 
 配置在 `~/.ai-kit/config.json`（点开头目录 + `.gitignore` 双保险，key 不会进 git），**key 直接写在文件里，不用环境变量**。
 
-就两个协议地址：`anthropic` 给 claude/zcode 用，`openai` 给 codex 用。任何兼容这两种协议的供应商都适用：
+公用的抽出来，baseUrl 按协议分两份，模型跟着引擎走（只有 Claude Code 有主+小双模型）：
 
 ```json
 {
   "defaultEngine": "claude",
+  "skillsDir": "~/Documents/你的skills仓库",
   "apiKey": "sk-xxx",
-  "anthropic": {
-    "baseUrl": "https://你的anthropic兼容地址",
-    "model": "claude-sonnet-4-5",
-    "smallModel": "claude-haiku-4-5"
-  },
-  "openai": {
-    "baseUrl": "https://你的openai兼容地址",
-    "model": "gpt-5-codex"
-  }
+  "anthropic": { "baseUrl": "https://你的anthropic兼容地址" },
+  "openai": { "baseUrl": "https://你的openai兼容地址" },
+  "claude": { "model": "claude-sonnet-4-5", "smallModel": "claude-haiku-4-5" },
+  "codex": { "model": "gpt-5-codex" },
+  "zcode": { "model": "glm-4.7" }
 }
 ```
 
+- `apiKey` 公用，一份 key 三引擎共用
+- `anthropic.baseUrl` 给 claude/zcode，`openai.baseUrl` 给 codex
+- 模型在各自引擎小节里配：`claude.smallModel` 对应 Claude Code 的 `ANTHROPIC_SMALL_FAST_MODEL`（haiku 跑杂活），codex/zcode 只有单模型
+- `skillsDir` 指向你独立的 skills git 仓库，apply/start 自动链入
 - `defaultEngine`：`ai-kit start` 交互菜单的默认项
 - 引擎按协议自动取对应地址：claude/zcode → `anthropic`，codex → `openai`
 
