@@ -401,5 +401,6 @@ switch (cmd) {
   case "install": await install(rest[0]); break;
   case "status": await status(); break;
   default:
-    console.log(`用法: ai-kit [start|change_engine|install|status]`);
+    if (ENGINES.includes(cmd as Engine)) await start(cmd);
+    else console.log(`用法: ai-kit [start|claude|codex|zcode|change_engine|install|status]`);
 }
