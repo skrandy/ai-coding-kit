@@ -6,10 +6,11 @@ import { join, dirname, resolve } from "node:path";
 import { homedir } from "node:os";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import * as readline from "node:readline/promises";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const HOME = homedir();
-const CONFIG_PATH = join(ROOT, ".config.json");
+const CONFIG_PATH = join(HOME, ".ai-kit", ".config.json");
 const ZSHRC = join(HOME, ".zshrc");
 const BEGIN = "# >>> ai-kit begin >>>";
 const END = "# <<< ai-kit end <<<";
@@ -182,8 +183,13 @@ async function autoSync(cfg) {
 }
 
 async function askLine(prompt) {
-  process.stdout.write(prompt);
-  return (await new Response(process.stdin).text()).trim();
+  // 逐行读取：Response(stdin).text() 要等流关闭(EOF)，交互终端下永不返回（卡死）
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    return (await rl.question(prompt)).trim();
+  } finally {
+    rl.close();
+  }
 }
 
 async function pickEngine(cfg, title) {
@@ -325,8 +331,7 @@ async function start(engineArg) {
   const passthrough = argv.slice(1).filter(x => !ENGINES.includes(x));
   let mode = "bypass";
   if (process.stdin.isTTY) {
-    process.stdout.write(`权限模式 [回车=bypass 全自动 / 输入 n=默认审批]: `);
-    const answer = (await new Response(process.stdin).text()).trim().toLowerCase();
+    const answer = (await askLine(`权限模式 [回车=bypass 全自动 / 输入 n=默认审批]: `)).toLowerCase();
     if (answer === "n" || answer === "normal") mode = "normal";
   }
   const extra = mode === "bypass" ? (a.bypassArgs ?? []) : [];
