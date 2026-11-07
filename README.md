@@ -17,7 +17,6 @@ ai-kit                                  # 任何目录直接运行
 ```bash
 ai-kit claude          # 临时启动指定引擎
 ai-kit change_engine   # 切换默认引擎
-ai-kit apply           # 重新写入配置 + 链 skills
 ai-kit status          # 查看状态
 ```
 

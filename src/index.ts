@@ -319,16 +319,6 @@ async function autoUpdate(engine: Engine): Promise<void> {
 
 // ---------- 命令 ----------
 
-async function apply() {
-  const cfg = loadConfig();
-  await autoSync(cfg);
-  for (const e of ENGINES) {
-    if (!ADAPTERS[e].installed()) { console.log(`- ${e} 未安装，跳过配置`); continue; }
-    const { ep, apiKey } = resolveEndpoint(cfg, e);
-    await ADAPTERS[e].applyConfig(e, ep, apiKey);
-  }
-}
-
 async function install(engineArg?: string) {
   const targets = engineArg ? [engineArg as Engine] : ENGINES;
   for (const e of targets) {
@@ -352,7 +342,16 @@ async function start(engineArg?: string) {
   }
   await autoUpdate(engine);
   const { apiKey } = resolveEndpoint(cfg, engine);
-  await autoSync(cfg);   const argv = process.argv.slice(2);
+  for (const e of ENGINES) {
+    const ae = ADAPTERS[e];
+    if (!ae.installed()) continue;
+    try {
+      const r = resolveEndpoint(cfg, e);
+      await ae.applyConfig(e, r.ep, r.apiKey);
+    } catch { }
+  }
+  await autoSync(cfg);
+  const argv = process.argv.slice(2);
   const startIdx = argv.indexOf("start");
   const passthrough = startIdx >= 0 ? argv.slice(startIdx + 1).filter(x => !/^(claude|codex|zcode)$/.test(x)) : [];
   const child = spawnSync(a.cmd, passthrough, { stdio: "inherit", env: { ...process.env, AI_KIT_API_KEY: apiKey }, shell: WIN });
@@ -400,8 +399,7 @@ switch (cmd) {
     else console.log(`已存在 ${CONFIG_PATH}`);
     break;
   case "install": await install(rest[0]); break;
-  case "apply": await apply(); break;
   case "status": await status(); break;
   default:
-    console.log(`用法: ai-kit [start|change_engine|install|apply|status]`);
+    console.log(`用法: ai-kit [start|change_engine|install|status]`);
 }
