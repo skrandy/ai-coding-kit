@@ -38,13 +38,13 @@ ai-kit status          # 查看状态
 
 - `apiKey` 公用；`anthropic` 地址给 claude/zcode，`openai` 地址给 codex
 - 模型跟引擎走：仅 claude 有 `smallModel`（对应 `ANTHROPIC_SMALL_FAST_MODEL`）
-- `skills/` 是一个**独立的 git 仓库位**，与本仓库无任何 git 关系。把你的 skills 仓库（可以是 private）直接 clone 进来：
+- skill 放本仓库 `skills/` 文件夹，用 [Anthropic 标准](https://code.claude.com/docs/en/skills)格式（每个 skill 一个文件夹 + `SKILL.md`）：
 
-```bash
-git clone <你的skills仓库> skills
+```
+skills/hello-world/SKILL.md
 ```
 
-启动时自动 `git pull` 并软链到 `~/{.claude,.codex,.zcode}/skills/`。不放东西也不影响使用。
+`SKILL.md` 带 frontmatter（`name` + `description`），`description` 写清什么时候触发。往里无限加，启动时自动软链到 `~/{.claude,.codex,.zcode}/skills/`。想用外部仓库就填 `skillsDir`。
 
 ## 写入位置
 

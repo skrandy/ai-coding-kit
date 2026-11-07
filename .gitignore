@@ -1,5 +1,2 @@
 node_modules/
 .DS_Store
-
-# skills/ 是独立的 git 仓库（git clone 你的skills仓库 skills），与本仓库无 git 关系
-skills/
