@@ -21,7 +21,14 @@ import { spawnSync } from "node:child_process";
 const ROOT = resolve(dirname(import.meta.path), "..");   // repo root (src/.. )
 const HOME = homedir();
 const CONFIG_PATH = join(HOME, ".ai-kit", "config.json"); // key 就放在这个文件里，不会进 git
-const SKILLS_SRC = join(ROOT, "skills");
+const DEFAULT_SKILLS_SRC = join(ROOT, "skills");           // 兜底：本项目 skills/ 目录
+
+/** skills 来源：config.skillsDir（独立 skills 仓库）优先，否则用本项目 skills/ */
+const skillsSrc = (cfg?: Config): string => {
+  const d = cfg?.skillsDir;
+  if (!d) return DEFAULT_SKILLS_SRC;
+  return d.startsWith("~") ? join(HOME, d.slice(1)) : resolve(d);
+};
 
 type Engine = "claude" | "codex" | "zcode";
 type Protocol = "anthropic" | "openai";
@@ -43,6 +50,8 @@ interface Endpoint {
 interface Config {
   defaultEngine: Engine;
   apiKey: string;
+  /** skills 仓库路径（独立 git 仓库），不填则用本项目 skills/ 目录 */
+  skillsDir?: string;
   /** anthropic 协议地址：给 claude / zcode 用 */
   anthropic: Endpoint;
   /** openai 协议地址：给 codex 用 */
@@ -225,10 +234,12 @@ async function apply() {
 }
 
 async function sync() {
-  if (!existsSync(SKILLS_SRC)) { console.log(`没有 ${SKILLS_SRC}，先创建 skills/<name>/SKILL.md`); return; }
-  for (const name of readdirSync(SKILLS_SRC)) {
-    const src = join(SKILLS_SRC, name);
-    if (statSync(src).isFile()) continue; // 跳过 README 等散文件
+  const cfg = loadConfig();
+  const src = skillsSrc(cfg);
+  if (!existsSync(src)) { console.log(`skills 目录不存在: ${src}（config.json 的 skillsDir 或项目 skills/）`); return; }
+  for (const name of readdirSync(src)) {
+    const skillPath = join(src, name);
+    if (statSync(skillPath).isFile()) continue; // 跳过 README 等散文件
     for (const e of ENGINES) {
       const a = ADAPTERS[e];
       if (!a.installed()) continue;
@@ -236,7 +247,7 @@ async function sync() {
       mkdirSync(dir, { recursive: true });
       const dest = join(dir, name);
       if (existsSync(dest)) { console.log(`  = ${e}:${name} 已存在，跳过`); continue; }
-      symlinkSync(src, dest);
+      symlinkSync(skillPath, dest);
       console.log(`  ✓ ${e}:${name} → ${dest}`);
     }
   }
@@ -302,7 +313,7 @@ async function status() {
     console.log(`${ok ? "●" : "○"} ${e.padEnd(7)} ${ok ? "已安装" : "未安装"}${extra}${cfg?.defaultEngine === e ? "  ← 默认" : ""}`);
   }
   console.log(`\nconfig: ${CONFIG_PATH}${cfg?.anthropic ? `  anthropic: ${cfg.anthropic.model}` : ""}${cfg?.openai ? `  openai: ${cfg.openai.model}` : ""}`);
-  console.log(`skills: ${SKILLS_SRC} (${existsSync(SKILLS_SRC) ? readdirSync(SKILLS_SRC).filter(n => existsSync(join(SKILLS_SRC, n, "SKILL.md"))).length : 0} 个)`);
+  console.log(`skills: ${skillsSrc(cfg)} (${existsSync(skillsSrc(cfg)) ? readdirSync(skillsSrc(cfg)).filter(n => existsSync(join(skillsSrc(cfg), n, "SKILL.md"))).length : 0} 个)`);
 }
 
 // ---------- 入口 ----------
