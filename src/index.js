@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /** ai-kit — 一份 config + 一个 skills 仓库，通吃 claude-code/codex/zcode。用法: ai-kit | change_engine | install [e] | status */
 
-import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync, symlinkSync, statSync, renameSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync, symlinkSync, statSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { homedir } from "node:os";
 import { spawnSync } from "node:child_process";
@@ -11,13 +11,6 @@ import * as readline from "node:readline/promises";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const HOME = homedir();
 const CONFIG_PATH = join(ROOT, ".config.json");
-
-// 旧版位置迁移：~/.ai-kit/.config.json → kit 根目录（一次性）
-const OLD_CONFIG = join(HOME, ".ai-kit", ".config.json");
-if (existsSync(OLD_CONFIG) && !existsSync(CONFIG_PATH)) {
-  renameSync(OLD_CONFIG, CONFIG_PATH);
-  console.log(`已迁移配置 ${OLD_CONFIG} → ${CONFIG_PATH}`);
-}
 const ZSHRC = join(HOME, ".zshrc");
 const BEGIN = "# >>> ai-kit begin >>>";
 const END = "# <<< ai-kit end <<<";
