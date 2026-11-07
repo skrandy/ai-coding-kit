@@ -44,6 +44,8 @@ interface Config {
 interface Adapter {
   name: string;
   cmd: string;
+  /** bypass 模式的启动参数 */
+  bypassArgs?: string[];
   pkg?: string;
   installed: () => boolean;
   install: () => Promise<void>;
@@ -63,6 +65,7 @@ const writeJson = (p: string, data: unknown) => {
 const claude: Adapter = {
   name: "claude-code",
   cmd: "claude",
+  bypassArgs: ["--dangerously-skip-permissions"],
   pkg: "@anthropic-ai/claude-code",
   installed: () => existsSync(join(HOME, ".claude")) || which("claude"),
   async install() {
@@ -87,6 +90,7 @@ const claude: Adapter = {
 const codex: Adapter = {
   name: "codex",
   cmd: "codex",
+  bypassArgs: ["--dangerously-bypass-approvals-and-sandbox"],
   pkg: "@openai/codex",
   installed: () => existsSync(join(HOME, ".codex")) || which("codex"),
   async install() {
@@ -378,7 +382,15 @@ async function start(engineArg?: string) {
   const argv = process.argv.slice(2);
   const startIdx = argv.indexOf("start");
   const passthrough = startIdx >= 0 ? argv.slice(startIdx + 1).filter(x => !/^(claude-code|codex|zcode)$/.test(x)) : [];
-  const child = spawnSync(a.cmd, passthrough, { stdio: "inherit", env: { ...process.env, AI_KIT_API_KEY: apiKey }, shell: WIN });
+  // 权限模式：默认 bypass（全自动），每次启动可选
+  let mode = "bypass";
+  if (process.stdin.isTTY) {
+    process.stdout.write(`权限模式 [回车=bypass 全自动 / 输入 n=默认审批]: `);
+    const answer = (await new Response(process.stdin).text()).trim().toLowerCase();
+    if (answer === "n" || answer === "normal") mode = "normal";
+  }
+  const extra = mode === "bypass" ? (a.bypassArgs ?? []) : [];
+  const child = spawnSync(a.cmd, [...extra, ...passthrough], { stdio: "inherit", env: { ...process.env, AI_KIT_API_KEY: apiKey }, shell: WIN });
   process.exit(child.status ?? 0);
 }
 

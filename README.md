@@ -18,6 +18,7 @@ ai-kit                                  # 任何目录直接运行
 ```bash
 ai-kit claude          # 临时启动指定引擎
 ai-kit change_engine   # 切换默认引擎
+ai-kit                 # 启动时可选权限模式：回车=bypass 全自动（默认），n=默认审批
 ai-kit status          # 查看状态
 ```
 
