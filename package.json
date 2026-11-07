@@ -7,6 +7,6 @@
     "ai-kit": "./src/index.ts"
   },
   "scripts": {
-    "start": "bun run src/index.ts"
+    "start": "node src/index.ts"
   }
 }

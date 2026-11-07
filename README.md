@@ -7,10 +7,7 @@
 ```bash
 git clone https://github.com/skrandy/ai-coding-kit && cd ai-coding-kit
 
-# 三种跑法任选（需要 node >=23 或 bun，装了哪个用哪个）
-./ai-kit                     # 方式 1：根目录启动脚本
-bun src/index.ts             # 方式 2：bun
-node src/index.ts            # 方式 3：node（原生跑 TS）
+npm start                    # 即 node src/index.ts
 
 # 首次运行：生成配置 → 选引擎（没装自动下载）→ 设默认 → 问一次是否加全局 alias
 # 之后运行：自动查更新 + 自动 pull/链 skills + 启动默认引擎
@@ -19,10 +16,10 @@ node src/index.ts            # 方式 3：node（原生跑 TS）
 首次启动会问一次是否加全局 alias（`ai` / `ai-kit`）。
 
 ```bash
-./ai-kit claude          # 临时启动指定引擎（bun run src/index.ts claude 等价）
-./ai-kit change_engine   # 切换默认引擎
-./ai-kit apply           # 重新写入配置 + 链 skills
-./ai-kit status          # 查看状态
+npm start -- claude        # 临时启动指定引擎
+npm start -- change_engine # 切换默认引擎
+npm start -- apply         # 重新写入配置 + 链 skills
+npm start -- status        # 查看状态
 ```
 
 ## .config.json
@@ -56,7 +53,7 @@ node src/index.ts            # 方式 3：node（原生跑 TS）
 
 ## 依赖
 
-- node >= 23（原生跑 TS）或 bun，二选一
+- node >= 23（原生跑 TS）
 - 装引擎（claude/codex）时需要 npm
 - git（skills 仓库自动 pull）
 
