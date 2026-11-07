@@ -209,10 +209,18 @@ function skillsSrc(cfg?: Config): string | null {
   return d.startsWith("~") ? join(HOME, d.slice(1)) : resolve(d);
 }
 
-/** 自动把 skills 软链进各引擎（apply / start 时自动执行） */
+/** 自动把 skills 软链进各引擎（apply / start 时自动执行）；skills 是 git 仓库时先 pull 最新 */
 async function autoSync(cfg: Config): Promise<void> {
   const src = skillsSrc(cfg);
   if (!src || !existsSync(src)) return;
+  if (existsSync(join(src, ".git"))) {
+    try {
+      const r = spawnSync("git", ["-C", src, "pull", "--ff-only"], { encoding: "utf8", timeout: 30000 });
+      if (r.status === 0 && r.stdout?.trim().match(/files? changed|Fast-forward/)) {
+        console.log(`  ✓ skills 仓库已更新: ${r.stdout.trim().split("\n")[0]}`);
+      }
+    } catch { /* 网络不通/非 git 仓库就跳过，别挡启动 */ }
+  }
   for (const name of readdirSync(src)) {
     const skillPath = join(src, name);
     if (statSync(skillPath).isFile()) continue;
