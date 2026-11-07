@@ -23,7 +23,7 @@ ai-kit status          # 查看状态
 
 ## .config.json
 
-`~/.ai-kit/.config.json`（点开头，key 不会进 git）：
+`.config.json（仓库根目录，点开头不会进 git）`（点开头，key 不会进 git）：
 
 ```json
 {
