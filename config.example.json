@@ -1,22 +1,13 @@
 {
   "defaultEngine": "claude",
-  "engineProvider": {
-    "claude": "volcano",
-    "codex": "volcano",
-    "zcode": "volcano"
+  "apiKey": "在这里填你的 API Key",
+  "anthropic": {
+    "baseUrl": "https://你的anthropic兼容地址",
+    "model": "claude-sonnet-4-5",
+    "smallModel": "claude-haiku-4-5"
   },
-  "providers": {
-    "volcano": {
-      "apiKey": "把你的火山方舟 API Key 填在这里",
-      "anthropic": {
-        "baseUrl": "https://ark.cn-beijing.volces.com/api/coding",
-        "model": "claude-sonnet-4-5",
-        "smallModel": "claude-haiku-4-5"
-      },
-      "openai": {
-        "baseUrl": "https://ark.cn-beijing.volces.com/api/v3",
-        "model": "doubao-seed-1-6"
-      }
-    }
+  "openai": {
+    "baseUrl": "https://你的openai兼容地址",
+    "model": "gpt-5-codex"
   }
 }

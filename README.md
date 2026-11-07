@@ -21,31 +21,26 @@ ai-kit start claude    # 跳过菜单直接启动指定引擎
 
 配置在 `~/.ai-kit/config.json`（点开头目录 + `.gitignore` 双保险，key 不会进 git），**key 直接写在文件里，不用环境变量**。
 
-每个 provider 分 `anthropic` / `openai` 两组协议地址——因为像火山方舟这类平台，两种协议的 baseUrl 是不同的：
+就两个协议地址：`anthropic` 给 claude/zcode 用，`openai` 给 codex 用。任何兼容这两种协议的供应商都适用：
 
 ```json
 {
   "defaultEngine": "claude",
-  "engineProvider": { "claude": "volcano", "codex": "volcano", "zcode": "volcano" },
-  "providers": {
-    "volcano": {
-      "apiKey": "sk-xxx",
-      "anthropic": {
-        "baseUrl": "https://ark.cn-beijing.volces.com/api/anthropic",
-        "model": "claude-sonnet-4-5"
-      },
-      "openai": {
-        "baseUrl": "https://ark.cn-beijing.volces.com/api/v3",
-        "model": "doubao-seed-1-6"
-      }
-    }
+  "apiKey": "sk-xxx",
+  "anthropic": {
+    "baseUrl": "https://你的anthropic兼容地址",
+    "model": "claude-sonnet-4-5",
+    "smallModel": "claude-haiku-4-5"
+  },
+  "openai": {
+    "baseUrl": "https://你的openai兼容地址",
+    "model": "gpt-5-codex"
   }
 }
 ```
 
-- `engineProvider`：每个引擎用哪个 provider；只有一个 provider 时可省略
-- 引擎按协议自动取对应组：claude/zcode → `anthropic`，codex → `openai`
 - `defaultEngine`：`ai-kit start` 交互菜单的默认项
+- 引擎按协议自动取对应地址：claude/zcode → `anthropic`，codex → `openai`
 
 ## 各引擎写入位置
 

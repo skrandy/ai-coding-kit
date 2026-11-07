@@ -40,17 +40,13 @@ interface Endpoint {
   smallModel?: string;
 }
 
-interface Provider {
-  apiKey: string;
-  anthropic?: Endpoint;
-  openai?: Endpoint;
-}
-
 interface Config {
   defaultEngine: Engine;
-  /** 引擎 → 用哪个 provider；不写则用唯一的 provider */
-  engineProvider?: Partial<Record<Engine, string>>;
-  providers: Record<string, Provider>;
+  apiKey: string;
+  /** anthropic 协议地址：给 claude / zcode 用 */
+  anthropic: Endpoint;
+  /** openai 协议地址：给 codex 用 */
+  openai: Endpoint;
 }
 
 // ---------- 引擎适配层 ----------
@@ -179,25 +175,19 @@ function loadConfig(): Config {
   return JSON.parse(readFileSync(CONFIG_PATH, "utf8")) as Config;
 }
 
-/** 取某引擎要用的 provider + 协议 endpoint + key（全部来自配置文件，无环境变量） */
+/** 取某引擎要用的协议 endpoint + key（全部来自配置文件，无环境变量） */
 function resolveEndpoint(cfg: Config, engine: Engine): { ep: Endpoint; apiKey: string } {
-  const names = Object.keys(cfg.providers ?? {});
-  if (names.length === 0) {
-    console.error(`config.json 里没有 providers，先编辑 ${CONFIG_PATH}`);
-    process.exit(1);
-  }
-  const name = cfg.engineProvider?.[engine] ?? (names.length === 1 ? names[0] : undefined);
-  if (!name || !cfg.providers[name]) {
-    console.error(`引擎 ${engine} 没有对应 provider，请在 config.json 的 engineProvider 里指定（可选: ${names.join(", ")}）`);
-    process.exit(1);
-  }
   const proto = ENGINE_PROTOCOL[engine];
-  const ep = cfg.providers[name][proto];
-  if (!ep) {
-    console.error(`provider "${name}" 没有配置 ${proto} 协议的 baseUrl/model（引擎 ${engine} 需要 ${proto} 协议）`);
+  const ep = cfg[proto];
+  if (!ep?.baseUrl) {
+    console.error(`config.json 里没有配置 ${proto} 协议的 baseUrl（引擎 ${engine} 需要 ${proto} 协议），先编辑 ${CONFIG_PATH}`);
     process.exit(1);
   }
-  return { ep, apiKey: cfg.providers[name].apiKey };
+  if (!cfg.apiKey) {
+    console.error(`config.json 里没有 apiKey，先编辑 ${CONFIG_PATH}`);
+    process.exit(1);
+  }
+  return { ep, apiKey: cfg.apiKey };
 }
 
 // ---------- 命令 ----------
@@ -311,7 +301,7 @@ async function status() {
     }
     console.log(`${ok ? "●" : "○"} ${e.padEnd(7)} ${ok ? "已安装" : "未安装"}${extra}${cfg?.defaultEngine === e ? "  ← 默认" : ""}`);
   }
-  console.log(`\nconfig: ${CONFIG_PATH}${cfg?.providers ? `  providers: ${Object.keys(cfg.providers).join(", ")}` : ""}`);
+  console.log(`\nconfig: ${CONFIG_PATH}${cfg?.anthropic ? `  anthropic: ${cfg.anthropic.model}` : ""}${cfg?.openai ? `  openai: ${cfg.openai.model}` : ""}`);
   console.log(`skills: ${SKILLS_SRC} (${existsSync(SKILLS_SRC) ? readdirSync(SKILLS_SRC).filter(n => existsSync(join(SKILLS_SRC, n, "SKILL.md"))).length : 0} 个)`);
 }
 
