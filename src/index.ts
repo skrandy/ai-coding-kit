@@ -197,8 +197,8 @@ function resolveEndpoint(cfg: Config, engine: Engine): { ep: { baseUrl: string; 
 }
 
 function skillsSrc(cfg?: Config): string | null {
-  const d = cfg?.skillsDir;
-  if (!d) return null;
+  const d = cfg?.skillsDir?.trim();
+  if (!d) return join(ROOT, "skills"); // 默认：仓库 skills/ 文件夹
   return d.startsWith("~") ? join(HOME, d.slice(1)) : resolve(d);
 }
 
