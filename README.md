@@ -12,7 +12,7 @@ ai-kit                 # 或 bun src/index.ts
 
 第一次运行 `ai-kit` 会进入引导：
 
-1. 自动生成 `~/.ai-kit/config.json` 模板（去填 apiKey 和两个 baseUrl）
+1. 自动生成 `~/.ai-kit/.config.json` 模板（去填 apiKey 和两个 baseUrl）
 2. 菜单选择 AI coding 引擎——没装的就自动下载
 3. 选中的引擎即默认引擎
 
@@ -35,9 +35,9 @@ ai-kit install codex   # 手动安装某个引擎
 ai-kit status          # 查看三引擎安装/配置状态
 ```
 
-## config.json
+## .config.json
 
-配置在 `~/.ai-kit/config.json`（点开头目录 + `.gitignore` 双保险，key 不会进 git），**key 直接写在文件里，不用环境变量**。
+配置在 `~/.ai-kit/.config.json`（点开头文件，天然不会被 git 跟踪，key 放心写，**key 直接写在文件里，不用环境变量**。
 
 公用的抽出来，baseUrl 按协议分两份，模型跟着引擎走（只有 Claude Code 有主+小双模型）：
 

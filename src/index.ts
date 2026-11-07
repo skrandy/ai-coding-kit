@@ -18,7 +18,7 @@ import { spawnSync } from "node:child_process";
 
 const ROOT = resolve(dirname(import.meta.path), "..");
 const HOME = homedir();
-const CONFIG_PATH = join(HOME, ".ai-kit", "config.json");
+const CONFIG_PATH = join(HOME, ".ai-kit", ".config.json"); // 点开头，天然不会进 git
 const ZSHRC = join(HOME, ".zshrc");
 const BEGIN = "# >>> ai-kit begin >>>";
 const END = "# <<< ai-kit end <<<";

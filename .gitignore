@@ -1,4 +1,6 @@
-config.json
 node_modules/
 .DS_Store
-skills/
+
+# skills 文件夹保留，内容不进仓库（用户自己配，走独立 skills 仓库 + skillsDir）
+skills/*
+!skills/.gitkeep
