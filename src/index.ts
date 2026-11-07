@@ -252,15 +252,44 @@ async function setDefault(cfg: Config, engine: Engine): Promise<Config> {
 }
 
 
+/** 缺什么问什么：apiKey / 协议地址 / 模型，答完即存进 .config.json */
+async function promptMissing(cfg: Config, engine: Engine): Promise<Config> {
+  if (!process.stdin.isTTY) return cfg;
+  console.log("检测到配置不完整，来补全一下（回车跳过表示稍后自己改配置文件）：\n");
+  if (!cfg.apiKey) {
+    const v = await askLine("API Key: ");
+    if (v) cfg.apiKey = v;
+  }
+  const em = cfg.engines[engine];
+  const proto = em?.protocol ?? "anthropic";
+  if (!cfg.llm[proto]?.baseUrl) {
+    const v = await askLine(`${proto} 协议地址 (baseUrl): `);
+    if (v) cfg.llm[proto] = { baseUrl: v };
+  }
+  if (em && !em.model) {
+    const v = await askLine(`${engine} 的模型名: `);
+    if (v) em.model = v;
+    if (engine === "claude-code" && !em.smallModel) {
+      const sv = await askLine("claude-code 的小模型 (smallModel，可回车跳过): ");
+      if (sv) em.smallModel = sv;
+    }
+  }
+  saveConfig(cfg);
+  console.log("");
+  return cfg;
+}
+
+/** 首次进入：生成 config → 问 apiKey/协议地址 → 选引擎（没有就下载）→ 问模型 → 设默认 */
 async function onboard(): Promise<Config> {
   console.log("=== ai-kit 首次设置 ===\n");
   const tpl = readFileSync(join(ROOT, "config.example.json"), "utf8");
   saveConfig(JSON.parse(tpl) as Config);
-  console.log(`已生成配置模板 ${CONFIG_PATH}`);
-  console.log(`（启动前需要填 apiKey 和 baseUrl；skillsDir 可选，指向你独立的 skills 仓库）\n`);
+  console.log(`已生成配置 ${CONFIG_PATH}\n`);
 
-  const cfg = loadConfig();
+  let cfg = loadConfig();
+  cfg = await promptMissing(cfg, "claude-code");
   const engine = await pickEngine({ ...cfg, defaultEngine: "claude-code" } as Config, "选择你的 AI coding 引擎：");
+  cfg = await promptMissing(cfg, engine);
   const a = ADAPTERS[engine];
   if (!a.installed()) {
     console.log(`下载安装 ${engine} ...`);
@@ -335,6 +364,11 @@ async function start(engineArg?: string) {
     await a.install();
   }
   await autoUpdate(engine);
+  // 缺字段就现场问（TTY），非 TTY 走 resolveEndpoint 的报错提示
+  const em0 = cfg.engines[engine];
+  if (!cfg.apiKey || !em0?.model || !cfg.llm[em0?.protocol ?? "anthropic"]?.baseUrl) {
+    cfg = await promptMissing(cfg, engine);
+  }
   const { apiKey } = resolveEndpoint(cfg, engine);
   for (const e of ENGINES) {
     const ae = ADAPTERS[e];
