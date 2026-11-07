@@ -1,13 +1,12 @@
 #!/usr/bin/env bun
 /** ai-kit — 一份 config + 一个 skills 仓库，通吃 claude/codex/zcode。用法: ai-kit | change_engine | apply | install [e] | status */
 
-import { $ } from "bun";
 import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync, symlinkSync, statSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { homedir } from "node:os";
 import { spawnSync } from "node:child_process";
 
-const ROOT = resolve(dirname(import.meta.path), "..");
+const ROOT = resolve(dirname((import.meta as any).filename ?? import.meta.path), "..");
 const HOME = homedir();
 const CONFIG_PATH = join(HOME, ".ai-kit", ".config.json");
 const ZSHRC = join(HOME, ".zshrc");
@@ -73,7 +72,7 @@ const claude: Adapter = {
   pkg: "@anthropic-ai/claude-code",
   installed: () => existsSync(join(HOME, ".claude")) || which("claude"),
   async install() {
-    await $`npm install -g @anthropic-ai/claude-code`.quiet();
+    await run("npm", ["install", "-g", "@anthropic-ai/claude-code"]);
   },
   async applyConfig(_engine, ep, apiKey) {
     const p = join(HOME, ".claude", "settings.json");
@@ -97,7 +96,7 @@ const codex: Adapter = {
   pkg: "@openai/codex",
   installed: () => existsSync(join(HOME, ".codex")) || which("codex"),
   async install() {
-    await $`npm install -g @openai/codex`.quiet();
+    await run("npm", ["install", "-g", "@openai/codex"]);
   },
   async applyConfig(_engine, ep, apiKey) {
     const p = join(HOME, ".codex", "config.toml");
@@ -152,6 +151,13 @@ const zcode: Adapter = {
 const ADAPTERS: Record<Engine, Adapter> = { claude, codex, zcode };
 
 // ---------- 工具函数 ----------
+
+function run(cmd: string, args: string[]): Promise<void> {
+  return new Promise((ok, err) => {
+    const c = spawnSync(cmd, args, { stdio: "inherit" });
+    c.status === 0 ? ok() : err(new Error(`${cmd} 退出码 ${c.status}`));
+  });
+}
 
 function which(cmd: string): boolean {
   return spawnSync("which", [cmd], { stdio: "ignore" }).status === 0;
@@ -295,7 +301,7 @@ async function autoUpdate(engine: Engine): Promise<void> {
   const a = ADAPTERS[engine];
   if (!a.pkg || !which("npm")) return;
   try {
-    const latest = (await $`npm view ${a.pkg} version`.quiet().text()).trim();
+    const latest = (spawnSync("npm", ["view", a.pkg, "version"], { encoding: "utf8" }).stdout ?? "").trim();
     const cur = (spawnSync(a.cmd, ["--version"], { encoding: "utf8" }).stdout ?? "").trim();
     if (latest && cur && latest !== cur) {
       console.log(`⬆ ${engine} 有新版本 ${cur} → ${latest}，更新中...`);

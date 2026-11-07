@@ -6,18 +6,20 @@
 
 ```bash
 git clone https://github.com/skrandy/ai-coding-kit && cd ai-coding-kit
-ai-kit                 # 首次：生成配置 → 选引擎（没装自动下载）→ 设默认
+./ai-kit               # 首次：生成配置 → 选引擎（没装自动下载）→ 设默认
                        # 之后：自动查更新 + 链 skills + 启动默认引擎
 ```
 
 首次启动会问一次是否加全局 alias（`ai` / `ai-kit`）。
 
 ```bash
-ai-kit claude          # 临时启动指定引擎
-ai-kit change_engine   # 切换默认引擎
-ai-kit apply           # 重新写入配置 + 链 skills
-ai-kit status          # 查看状态
+./ai-kit claude        # 临时启动指定引擎
+./ai-kit change_engine # 切换默认引擎
+./ai-kit apply         # 重新写入配置 + 链 skills
+./ai-kit status        # 查看状态
 ```
+
+需要 node（>=23）或 bun。首次启动可加全局 alias，以后直接敲 `ai-kit` / `ai`。
 
 ## .config.json
 
