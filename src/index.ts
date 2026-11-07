@@ -14,15 +14,9 @@ const BEGIN = "# >>> ai-kit begin >>>";
 const END = "# <<< ai-kit end <<<";
 const SELF = "bun " + join(ROOT, "src", "index.ts");
 
-type Engine = "claude" | "codex" | "zcode";
+type Engine = "claude-code" | "codex" | "zcode";
 type Protocol = "anthropic" | "openai";
-const ENGINES: Engine[] = ["claude", "codex", "zcode"];
-
-const ENGINE_PROTOCOL: Record<Engine, Protocol> = {
-  claude: "anthropic",
-  zcode: "anthropic",
-  codex: "openai",
-};
+const ENGINES: Engine[] = ["claude-code", "codex", "zcode"];
 
 interface ProtocolEndpoint {
   baseUrl: string;
@@ -67,7 +61,7 @@ const writeJson = (p: string, data: unknown) => {
 };
 
 const claude: Adapter = {
-  name: "claude",
+  name: "claude-code",
   cmd: "claude",
   pkg: "@anthropic-ai/claude-code",
   installed: () => existsSync(join(HOME, ".claude")) || which("claude"),
@@ -148,7 +142,7 @@ const zcode: Adapter = {
   skillsDir: () => join(HOME, ".zcode", "skills"),
 };
 
-const ADAPTERS: Record<Engine, Adapter> = { claude, codex, zcode };
+const ADAPTERS: Record<Engine, Adapter> = { "claude-code": claude, codex, zcode };
 
 // ---------- 工具函数 ----------
 
@@ -179,14 +173,14 @@ function saveConfig(cfg: Config) {
 }
 
 function resolveEndpoint(cfg: Config, engine: Engine): { ep: { baseUrl: string; model: string; smallModel?: string }; apiKey: string } {
-  const baseUrl = cfg[ENGINE_PROTOCOL[engine]]?.baseUrl;
-  if (!baseUrl) {
-    console.error(`config.json 里没有配置 ${ENGINE_PROTOCOL[engine]} 协议的 baseUrl（引擎 ${engine} 需要），请编辑 ${CONFIG_PATH}`);
-    process.exit(1);
-  }
-  const em = cfg[engine];
+  const em = cfg.engines?.[engine];
   if (!em?.model) {
     console.error(`config.json 里没有配置 ${engine} 的 model，请编辑 ${CONFIG_PATH}`);
+    process.exit(1);
+  }
+  const baseUrl = cfg.llm?.[em.protocol]?.baseUrl;
+  if (!baseUrl) {
+    console.error(`config.json 里没有配置 llm.${em.protocol}.baseUrl（引擎 ${engine} 走 ${em.protocol} 协议），请编辑 ${CONFIG_PATH}`);
     process.exit(1);
   }
   if (!cfg.apiKey) {
@@ -266,7 +260,7 @@ async function onboard(): Promise<Config> {
   console.log(`（启动前需要填 apiKey 和 baseUrl；skillsDir 可选，指向你独立的 skills 仓库）\n`);
 
   const cfg = loadConfig();
-  const engine = await pickEngine({ ...cfg, defaultEngine: "claude" } as Config, "选择你的 AI coding 引擎：");
+  const engine = await pickEngine({ ...cfg, defaultEngine: "claude-code" } as Config, "选择你的 AI coding 引擎：");
   const a = ADAPTERS[engine];
   if (!a.installed()) {
     console.log(`下载安装 ${engine} ...`);
@@ -353,7 +347,7 @@ async function start(engineArg?: string) {
   await autoSync(cfg);
   const argv = process.argv.slice(2);
   const startIdx = argv.indexOf("start");
-  const passthrough = startIdx >= 0 ? argv.slice(startIdx + 1).filter(x => !/^(claude|codex|zcode)$/.test(x)) : [];
+  const passthrough = startIdx >= 0 ? argv.slice(startIdx + 1).filter(x => !/^(claude-code|codex|zcode)$/.test(x)) : [];
   const child = spawnSync(a.cmd, passthrough, { stdio: "inherit", env: { ...process.env, AI_KIT_API_KEY: apiKey }, shell: WIN });
   process.exit(child.status ?? 0);
 }
@@ -371,11 +365,11 @@ async function status() {
     const ok = a.installed();
     let extra = "";
     if (cfg) {
-      try { extra = `  ${resolveEndpoint(cfg, e).ep.model}`; } catch { extra = "  ⚠ 配置不全"; }
+      try { const r = resolveEndpoint(cfg, e); extra = `  ${r.ep.model} (${cfg.engines[e].protocol})`; } catch { extra = "  ⚠ 配置不全"; }
     }
     console.log(`${ok ? "●" : "○"} ${e.padEnd(7)} ${ok ? "已安装" : "未安装"}${extra}${cfg?.defaultEngine === e ? "  ← 默认" : ""}`);
   }
-  console.log(`\nconfig: ${CONFIG_PATH}${cfg?.claude ? `  claude: ${cfg.claude.model}${cfg.claude.smallModel ? '+' + cfg.claude.smallModel : ''}` : ""}${cfg?.codex ? `  codex: ${cfg.codex.model}` : ""}${cfg?.zcode ? `  zcode: ${cfg.zcode.model}` : ""}`);
+  console.log(`\nconfig: ${CONFIG_PATH}`);
   const src = skillsSrc(cfg);
   console.log(`skills: ${src ?? "未配置 skillsDir"}${src && existsSync(src) ? ` (${readdirSync(src).filter(n => existsSync(join(src, n, "SKILL.md"))).length} 个)` : ""}`);
 }
@@ -402,5 +396,5 @@ switch (cmd) {
   case "status": await status(); break;
   default:
     if (ENGINES.includes(cmd as Engine)) await start(cmd);
-    else console.log(`用法: ai-kit [start|claude|codex|zcode|change_engine|install|status]`);
+    else console.log(`用法: ai-kit [start|claude-code|codex|zcode|change_engine|install|status]`);
 }
