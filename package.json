@@ -4,9 +4,15 @@
   "description": "One config, one skills folder, three AI coding engines (Claude Code / Codex / ZCode)",
   "type": "module",
   "bin": {
-    "ai-kit": "./src/index.ts"
+    "ai-kit": "src/index.ts"
   },
   "scripts": {
     "start": "node src/index.ts"
-  }
+  },
+  "files": [
+    "src",
+    "config.example.json",
+    "README.md",
+    "LICENSE"
+  ]
 }

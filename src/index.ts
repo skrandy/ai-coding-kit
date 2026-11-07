@@ -1,4 +1,4 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 /** ai-kit — 一份 config + 一个 skills 仓库，通吃 claude/codex/zcode。用法: ai-kit | change_engine | apply | install [e] | status */
 
 import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync, symlinkSync, statSync } from "node:fs";
@@ -152,9 +152,11 @@ const ADAPTERS: Record<Engine, Adapter> = { claude, codex, zcode };
 
 // ---------- 工具函数 ----------
 
+const WIN = process.platform === "win32";
+
 function run(cmd: string, args: string[]): Promise<void> {
   return new Promise((ok, err) => {
-    const c = spawnSync(cmd, args, { stdio: "inherit" });
+    const c = spawnSync(cmd, args, { stdio: "inherit", shell: WIN });
     c.status === 0 ? ok() : err(new Error(`${cmd} 退出码 ${c.status}`));
   });
 }
@@ -206,7 +208,7 @@ async function autoSync(cfg: Config): Promise<void> {
   if (!src || !existsSync(src)) return;
   if (existsSync(join(src, ".git"))) {
     try {
-      const r = spawnSync("git", ["-C", src, "pull", "--ff-only"], { encoding: "utf8", timeout: 30000 });
+      const r = spawnSync("git", ["-C", src, "pull", "--ff-only"], { encoding: "utf8", timeout: 30000, shell: WIN });
       if (r.status === 0 && r.stdout?.trim().match(/files? changed|Fast-forward/)) {
         console.log(`  ✓ skills 仓库已更新: ${r.stdout.trim().split("\n")[0]}`);
       }
@@ -223,7 +225,7 @@ async function autoSync(cfg: Config): Promise<void> {
       mkdirSync(dir, { recursive: true });
       const dest = join(dir, name);
       if (existsSync(dest)) continue;
-      symlinkSync(skillPath, dest);
+      symlinkSync(resolve(skillPath), dest, WIN ? "junction" : "dir");
       console.log(`  ✓ skills: ${name} → ${dest}`);
     }
   }
@@ -274,8 +276,13 @@ async function onboard(): Promise<Config> {
 }
 
 
+/** 是否已通过 npm 全局安装（bin 在 PATH 里就不需要 alias） */
+function installedGlobal(): boolean {
+  return which("ai-kit");
+}
+
 async function maybeAlias(cfg: Config): Promise<Config> {
-  if (cfg.aliasInstalled !== undefined) return cfg;
+  if (cfg.aliasInstalled !== undefined || WIN || installedGlobal()) return cfg;
   if (!process.stdin.isTTY) return cfg;
   const yes = (await askLine("是否把 ai / ai-kit 加入全局命令（写进 ~/.zshrc 托管块）？[Y/n]: ")).toLowerCase();
   if (yes === "" || yes === "y" || yes === "yes") {
@@ -302,7 +309,7 @@ async function autoUpdate(engine: Engine): Promise<void> {
   if (!a.pkg || !which("npm")) return;
   try {
     const latest = (spawnSync("npm", ["view", a.pkg, "version"], { encoding: "utf8" }).stdout ?? "").trim();
-    const cur = (spawnSync(a.cmd, ["--version"], { encoding: "utf8" }).stdout ?? "").trim();
+    const cur = (spawnSync(a.cmd, ["--version"], { encoding: "utf8", shell: WIN }).stdout ?? "").trim();
     if (latest && cur && latest !== cur) {
       console.log(`⬆ ${engine} 有新版本 ${cur} → ${latest}，更新中...`);
       await a.install();
@@ -348,7 +355,7 @@ async function start(engineArg?: string) {
   await autoSync(cfg);   const argv = process.argv.slice(2);
   const startIdx = argv.indexOf("start");
   const passthrough = startIdx >= 0 ? argv.slice(startIdx + 1).filter(x => !/^(claude|codex|zcode)$/.test(x)) : [];
-  const child = spawnSync(a.cmd, passthrough, { stdio: "inherit", env: { ...process.env, AI_KIT_API_KEY: apiKey } });
+  const child = spawnSync(a.cmd, passthrough, { stdio: "inherit", env: { ...process.env, AI_KIT_API_KEY: apiKey }, shell: WIN });
   process.exit(child.status ?? 0);
 }
 

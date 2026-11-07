@@ -5,9 +5,8 @@
 ## 用法
 
 ```bash
-git clone https://github.com/skrandy/ai-coding-kit && cd ai-coding-kit
-
-npm start                    # 即 node src/index.ts
+npm i -g github:skrandy/ai-coding-kit   # 全局安装
+ai-kit                                  # 任何目录直接运行
 
 # 首次运行：生成配置 → 选引擎（没装自动下载）→ 设默认 → 问一次是否加全局 alias
 # 之后运行：自动查更新 + 自动 pull/链 skills + 启动默认引擎
@@ -16,10 +15,10 @@ npm start                    # 即 node src/index.ts
 首次启动会问一次是否加全局 alias（`ai` / `ai-kit`）。
 
 ```bash
-npm start -- claude        # 临时启动指定引擎
-npm start -- change_engine # 切换默认引擎
-npm start -- apply         # 重新写入配置 + 链 skills
-npm start -- status        # 查看状态
+ai-kit claude          # 临时启动指定引擎
+ai-kit change_engine   # 切换默认引擎
+ai-kit apply           # 重新写入配置 + 链 skills
+ai-kit status          # 查看状态
 ```
 
 ## .config.json
@@ -53,8 +52,8 @@ npm start -- status        # 查看状态
 
 ## 依赖
 
-- node >= 23（原生跑 TS）
-- 装引擎（claude/codex）时需要 npm
+- node >= 23 + npm
 - git（skills 仓库自动 pull）
+- Windows / macOS / Linux；Windows 下 skills 用 junction 链接，无需管理员权限
 
 MIT
