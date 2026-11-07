@@ -5,3 +5,4 @@ node_modules/
 # skills/ 内容不入库：直接放 skill 文件夹，或 clone 你的 skills 仓库进来
 skills/*
 !skills/.gitkeep
+.vscode
