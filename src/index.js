@@ -215,7 +215,7 @@ async function setDefault(cfg, engine) {
 
 async function promptMissing(cfg, engine) {
   if (!process.stdin.isTTY) return cfg;
-  console.log("检测到配置不完整，来补全一下（回车跳过表示稍后自己改配置文件）：\n");
+  console.log(`首次启动 ${engine} / 配置不完整，补全一下（回车跳过表示稍后自己改配置文件）：\n`);
   if (!cfg.apiKey) {
     const v = await askLine("API Key: ");
     if (v) cfg.apiKey = v;
@@ -245,15 +245,14 @@ async function onboard() {
   saveConfig(JSON.parse(tpl));
   console.log(`已生成配置 ${CONFIG_PATH}\n`);
 
-  let cfg = loadConfig();
-  cfg = await promptMissing(cfg, "claude-code");
-  const engine = await pickEngine({ ...cfg, defaultEngine: "claude-code" }, "选择你的 AI coding 引擎：");
-  cfg = await promptMissing(cfg, engine);
+  const cfg = loadConfig();
+  const engine = await pickEngine(cfg, "选择你的 AI coding 引擎：");
   const a = ADAPTERS[engine];
   if (!a.installed()) {
     console.log(`下载安装 ${engine} ...`);
     await a.install();
   }
+  console.log(`\n引擎相关配置（API Key / baseUrl / 模型名）在首次启动对应引擎时引导补全。`);
   return setDefault(cfg, engine);
 }
 
