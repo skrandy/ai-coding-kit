@@ -309,7 +309,7 @@ async function autoUpdate(engine: Engine): Promise<void> {
   if (!a.pkg || !which("npm")) return;
   try {
     const latest = (spawnSync("npm", ["view", a.pkg, "version"], { encoding: "utf8" }).stdout ?? "").trim();
-    const cur = (spawnSync(a.cmd, ["--version"], { encoding: "utf8", shell: WIN }).stdout ?? "").trim();
+    const cur = ((spawnSync(a.cmd, ["--version"], { encoding: "utf8", shell: WIN }).stdout ?? "").match(/\d+\.\d+\.\d+/) ?? [""])[0];
     if (latest && cur && latest !== cur) {
       console.log(`⬆ ${engine} 有新版本 ${cur} → ${latest}，更新中...`);
       await a.install();
