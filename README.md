@@ -36,8 +36,18 @@ ai-kit status          # 查看状态
 }
 ```
 
-- `apiKey` 公用；`anthropic` 地址给 claude/zcode，`openai` 地址给 codex
-- 模型跟引擎走：仅 claude 有 `smallModel`（对应 `ANTHROPIC_SMALL_FAST_MODEL`）
+### 怎么理解这份配置
+
+你在 token plan（比如 GLM Coding Plan）买的服务会给你**两个协议的接入地址**：
+
+- **anthropic 协议地址** —— 给说 Anthropic 协议的引擎用（`claude-code`，以及走 anthropic 协议配置的 `zcode`）
+- **openai 协议地址** —— 给说 OpenAI/GPT 协议的引擎用（`codex`）
+
+`engines` 里每个引擎用 `protocol` 字段声明自己说哪种协议，请求就发到 `llm` 里对应的地址。引擎换协议、换地址互不影响。
+
+- `apiKey` 公用
+- 只有 `claude-code` 有 `smallModel`（Claude Code 专属的 `ANTHROPIC_SMALL_FAST_MODEL`，跑后台小任务省钱）；其他引擎单模型
+- `zcode` 的模型/协议也可以直接在客户端内管理，这里的配置作为记录与兜底
 - skill 放本仓库 `skills/` 文件夹，用 [Anthropic 标准](https://code.claude.com/docs/en/skills)格式（每个 skill 一个文件夹 + `SKILL.md`）：
 
 ```
