@@ -19,22 +19,33 @@ ai-kit start claude    # 跳过菜单直接启动指定引擎
 
 ## config.json
 
+配置在 `~/.ai-kit/config.json`（点开头目录 + `.gitignore` 双保险，key 不会进 git），**key 直接写在文件里，不用环境变量**。
+
+每个 provider 分 `anthropic` / `openai` 两组协议地址——因为像火山方舟这类平台，两种协议的 baseUrl 是不同的：
+
 ```json
 {
   "defaultEngine": "claude",
-  "provider": {
-    "name": "my-provider",
-    "baseUrl": "https://api.example.com/anthropic",
-    "apiKeyEnv": "AI_KIT_API_KEY",
-    "model": "claude-sonnet-4-5",
-    "smallModel": "claude-haiku-4-5"
+  "engineProvider": { "claude": "volcano", "codex": "volcano", "zcode": "volcano" },
+  "providers": {
+    "volcano": {
+      "apiKey": "sk-xxx",
+      "anthropic": {
+        "baseUrl": "https://ark.cn-beijing.volces.com/api/anthropic",
+        "model": "claude-sonnet-4-5"
+      },
+      "openai": {
+        "baseUrl": "https://ark.cn-beijing.volces.com/api/v3",
+        "model": "doubao-seed-1-6"
+      }
+    }
   }
 }
 ```
 
-- `baseUrl`：任何兼容 Anthropic 协议的中转/聚合 API 地址
-- `apiKeyEnv`：从哪个环境变量读 key（推荐，仓库里不放真 key）
-- `defaultEngine`：`ai-kit start` 不带参数时启动谁
+- `engineProvider`：每个引擎用哪个 provider；只有一个 provider 时可省略
+- 引擎按协议自动取对应组：claude/zcode → `anthropic`，codex → `openai`
+- `defaultEngine`：`ai-kit start` 交互菜单的默认项
 
 ## 各引擎写入位置
 
@@ -47,5 +58,5 @@ ai-kit start claude    # 跳过菜单直接启动指定引擎
 ## 注意
 
 - `apply` 幂等，可反复执行；换 provider 后重新 apply + 重启引擎即可。
-- Codex 的 key 通过 `AI_KIT_API_KEY` 环境变量传递（`start` 命令会自动注入；手动跑 codex 时请自行 export）。
+- Codex 的 key 写入 `~/.zshenv` 托管块（`ai-kit begin/end` 之间），手动跑 codex 也能直接用；`start` 启动时也会自动注入。
 - ⚠️ Codex/ZCode 的 skills 目录以各工具当前版本实际支持的路径为准，如版本变动请提 issue。

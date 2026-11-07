@@ -1,11 +1,22 @@
 {
-  "$schema": "./config.schema.md",
   "defaultEngine": "claude",
-  "provider": {
-    "name": "my-provider",
-    "baseUrl": "https://api.example.com/anthropic",
-    "apiKeyEnv": "AI_KIT_API_KEY",
-    "model": "claude-sonnet-4-5",
-    "smallModel": "claude-haiku-4-5"
+  "engineProvider": {
+    "claude": "volcano",
+    "codex": "volcano",
+    "zcode": "volcano"
+  },
+  "providers": {
+    "volcano": {
+      "apiKey": "把你的火山方舟 API Key 填在这里",
+      "anthropic": {
+        "baseUrl": "https://ark.cn-beijing.volces.com/api/anthropic",
+        "model": "claude-sonnet-4-5",
+        "smallModel": "claude-haiku-4-5"
+      },
+      "openai": {
+        "baseUrl": "https://ark.cn-beijing.volces.com/api/v3",
+        "model": "doubao-seed-1-6"
+      }
+    }
   }
 }

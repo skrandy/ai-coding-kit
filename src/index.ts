@@ -8,37 +8,49 @@
  *   ai-kit apply                     把 config.json 写入各引擎的 LLM 配置
  *   ai-kit sync                      把 skills/* 软链进各引擎的 skills 目录
  *   ai-kit use <engine>              设置默认引擎
- *   ai-kit start [engine]            以配置好的环境变量启动引擎（默认用 defaultEngine）
+ *   ai-kit start [engine]            启动引擎：带参数直接启动；不带参数交互选择并记住默认
  *   ai-kit status                    查看各引擎安装/配置状态
  */
 
 import { $ } from "bun";
-import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync, symlinkSync, unlinkSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync, symlinkSync, statSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { homedir } from "node:os";
 import { spawnSync } from "node:child_process";
 
 const ROOT = resolve(dirname(import.meta.path), "..");   // repo root (src/.. )
 const HOME = homedir();
-const CONFIG_PATH = existsSync(join(ROOT, "config.json"))
-  ? join(ROOT, "config.json")
-  : join(HOME, ".ai-kit", "config.json");
+const CONFIG_PATH = join(HOME, ".ai-kit", "config.json"); // key 就放在这个文件里，不会进 git
 const SKILLS_SRC = join(ROOT, "skills");
 
 type Engine = "claude" | "codex" | "zcode";
+type Protocol = "anthropic" | "openai";
 const ENGINES: Engine[] = ["claude", "codex", "zcode"];
+
+/** 各引擎说哪种协议 */
+const ENGINE_PROTOCOL: Record<Engine, Protocol> = {
+  claude: "anthropic",
+  zcode: "anthropic",
+  codex: "openai",
+};
+
+interface Endpoint {
+  baseUrl: string;
+  model: string;
+  smallModel?: string;
+}
+
+interface Provider {
+  apiKey: string;
+  anthropic?: Endpoint;
+  openai?: Endpoint;
+}
 
 interface Config {
   defaultEngine: Engine;
-  provider: {
-    name: string;
-    baseUrl: string;
-    /** 优先从该环境变量读取 key；也允许直接写 apiKey（不推荐提交到仓库） */
-    apiKeyEnv?: string;
-    apiKey?: string;
-    model: string;
-    smallModel?: string;
-  };
+  /** 引擎 → 用哪个 provider；不写则用唯一的 provider */
+  engineProvider?: Partial<Record<Engine, string>>;
+  providers: Record<string, Provider>;
 }
 
 // ---------- 引擎适配层 ----------
@@ -46,11 +58,10 @@ interface Config {
 interface Adapter {
   name: string;
   cmd: string;
-  /** 引擎判定已安装 */
   installed: () => boolean;
   install: () => Promise<void>;
-  /** 写入 LLM 配置 */
-  applyConfig: (cfg: Config, apiKey: string) => Promise<void>;
+  /** 写入 LLM 配置（拿到该引擎对应协议的 endpoint + key） */
+  applyConfig: (engine: Engine, ep: Endpoint, apiKey: string) => Promise<void>;
   /** skills 目标目录 */
   skillsDir: () => string;
 }
@@ -71,19 +82,19 @@ const claude: Adapter = {
   async install() {
     await $`npm install -g @anthropic-ai/claude-code`.quiet();
   },
-  async applyConfig(cfg, apiKey) {
+  async applyConfig(_engine, ep, apiKey) {
     // Claude Code: ~/.claude/settings.json 的 env 字段注入 base url / token / model
     const p = join(HOME, ".claude", "settings.json");
     const settings = readJson<Record<string, any>>(p) ?? {};
     settings.env = {
       ...(settings.env ?? {}),
-      ANTHROPIC_BASE_URL: cfg.provider.baseUrl,
+      ANTHROPIC_BASE_URL: ep.baseUrl,
       ANTHROPIC_AUTH_TOKEN: apiKey,
-      ANTHROPIC_MODEL: cfg.provider.model,
-      ...(cfg.provider.smallModel ? { ANTHROPIC_SMALL_FAST_MODEL: cfg.provider.smallModel } : {}),
+      ANTHROPIC_MODEL: ep.model,
+      ...(ep.smallModel ? { ANTHROPIC_SMALL_FAST_MODEL: ep.smallModel } : {}),
     };
     writeJson(p, settings);
-    console.log(`  ✓ claude → ${p}`);
+    console.log(`  ✓ claude → ${p}  (${ep.model} @ ${ep.baseUrl})`);
   },
   skillsDir: () => join(HOME, ".claude", "skills"),
 };
@@ -95,8 +106,8 @@ const codex: Adapter = {
   async install() {
     await $`npm install -g @openai/codex`.quiet();
   },
-  async applyConfig(cfg, _apiKey) {
-    // Codex: ~/.codex/config.toml，用托管块避免覆盖用户已有内容；key 走 env_key
+  async applyConfig(_engine, ep, apiKey) {
+    // Codex: ~/.codex/config.toml 托管块；key 写进 ~/.zshenv 托管块（文件里，不依赖手动 export）
     const p = join(HOME, ".codex", "config.toml");
     mkdirSync(dirname(p), { recursive: true });
     const existing = existsSync(p) ? readFileSync(p, "utf8") : "";
@@ -105,18 +116,25 @@ const codex: Adapter = {
     const stripped = existing.replace(new RegExp(`${BEGIN}[\\s\\S]*?${END}\\n?`, "g"), "");
     const block = [
       BEGIN,
-      `model = "${cfg.provider.model}"`,
+      `model = "${ep.model}"`,
       `model_provider = "ai-kit"`,
       ``,
       `[model_providers.ai-kit]`,
-      `name = "${cfg.provider.name}"`,
-      `base_url = "${cfg.provider.baseUrl}"`,
+      `name = "ai-kit"`,
+      `base_url = "${ep.baseUrl}"`,
       `env_key = "AI_KIT_API_KEY"`,
       END,
       "",
     ].join("\n");
     writeFileSync(p, stripped + block);
-    console.log(`  ✓ codex → ${p}`);
+
+    // 把 key 写进 ~/.zshenv（dot 文件，手动跑 codex 也能直接用）
+    const zshenv = join(HOME, ".zshenv");
+    const cur = existsSync(zshenv) ? readFileSync(zshenv, "utf8") : "";
+    const strippedEnv = cur.replace(new RegExp(`${BEGIN}[\\s\\S]*?${END}\\n?`, "g"), "");
+    const envBlock = [BEGIN, `export AI_KIT_API_KEY="${apiKey}"`, END, ""].join("\n");
+    writeFileSync(zshenv, strippedEnv + envBlock);
+    console.log(`  ✓ codex → ${p} + key 写入 ~/.zshenv  (${ep.model} @ ${ep.baseUrl})`);
   },
   skillsDir: () => join(HOME, ".codex", "skills"),
 };
@@ -128,19 +146,18 @@ const zcode: Adapter = {
   async install() {
     console.log("  ⚠ zcode 请从 ZCode 官网/客户端安装；本命令只负责配置与 skills 同步。");
   },
-  async applyConfig(cfg, apiKey) {
+  async applyConfig(_engine, ep, apiKey) {
     // ZCode: 引擎/供应商可在客户端内管理；这里做 best-effort 合并到 ~/.zcode/settings.json
     const p = join(HOME, ".zcode", "settings.json");
     const settings = readJson<Record<string, any>>(p) ?? {};
     settings["ai-kit"] = {
-      provider: cfg.provider.name,
-      baseUrl: cfg.provider.baseUrl,
-      model: cfg.provider.model,
-      ...(cfg.provider.smallModel ? { smallModel: cfg.provider.smallModel } : {}),
-      apiKeyEnv: cfg.provider.apiKeyEnv ?? "AI_KIT_API_KEY",
+      baseUrl: ep.baseUrl,
+      model: ep.model,
+      ...(ep.smallModel ? { smallModel: ep.smallModel } : {}),
+      apiKey,
     };
     writeJson(p, settings);
-    console.log(`  ✓ zcode → ${p}（客户端内如需切 provider 请在应用设置里选择）`);
+    console.log(`  ✓ zcode → ${p}  (${ep.model} @ ${ep.baseUrl}，客户端内可再调整)`);
   },
   skillsDir: () => join(HOME, ".zcode", "skills"),
 };
@@ -162,14 +179,25 @@ function loadConfig(): Config {
   return JSON.parse(readFileSync(CONFIG_PATH, "utf8")) as Config;
 }
 
-function resolveApiKey(cfg: Config): string {
-  const envName = cfg.provider.apiKeyEnv ?? "AI_KIT_API_KEY";
-  const key = cfg.provider.apiKey ?? process.env[envName];
-  if (!key) {
-    console.error(`缺少 API key：请 export ${envName}=... 或在 config.json 里填 provider.apiKey（不建议提交）`);
+/** 取某引擎要用的 provider + 协议 endpoint + key（全部来自配置文件，无环境变量） */
+function resolveEndpoint(cfg: Config, engine: Engine): { ep: Endpoint; apiKey: string } {
+  const names = Object.keys(cfg.providers ?? {});
+  if (names.length === 0) {
+    console.error(`config.json 里没有 providers，先编辑 ${CONFIG_PATH}`);
     process.exit(1);
   }
-  return key;
+  const name = cfg.engineProvider?.[engine] ?? (names.length === 1 ? names[0] : undefined);
+  if (!name || !cfg.providers[name]) {
+    console.error(`引擎 ${engine} 没有对应 provider，请在 config.json 的 engineProvider 里指定（可选: ${names.join(", ")}）`);
+    process.exit(1);
+  }
+  const proto = ENGINE_PROTOCOL[engine];
+  const ep = cfg.providers[name][proto];
+  if (!ep) {
+    console.error(`provider "${name}" 没有配置 ${proto} 协议的 baseUrl/model（引擎 ${engine} 需要 ${proto} 协议）`);
+    process.exit(1);
+  }
+  return { ep, apiKey: cfg.providers[name].apiKey };
 }
 
 // ---------- 命令 ----------
@@ -182,7 +210,8 @@ async function init() {
   const tpl = readFileSync(join(ROOT, "config.example.json"), "utf8");
   mkdirSync(dirname(CONFIG_PATH), { recursive: true });
   writeFileSync(CONFIG_PATH, tpl);
-  console.log(`已生成 ${CONFIG_PATH}，编辑后运行 ai-kit apply`);
+  console.log(`已生成 ${CONFIG_PATH}`);
+  console.log(`编辑它：填 apiKey、各协议的 baseUrl/model，然后运行 ai-kit apply`);
 }
 
 async function install(engineArg?: string) {
@@ -198,15 +227,14 @@ async function install(engineArg?: string) {
 
 async function apply() {
   const cfg = loadConfig();
-  const apiKey = resolveApiKey(cfg);
   for (const e of ENGINES) {
     if (!ADAPTERS[e].installed()) { console.log(`- ${e} 未安装，跳过配置`); continue; }
-    await ADAPTERS[e].applyConfig(cfg, apiKey);
+    const { ep, apiKey } = resolveEndpoint(cfg, e);
+    await ADAPTERS[e].applyConfig(e, ep, apiKey);
   }
 }
 
 async function sync() {
-  const cfg = loadConfig();
   if (!existsSync(SKILLS_SRC)) { console.log(`没有 ${SKILLS_SRC}，先创建 skills/<name>/SKILL.md`); return; }
   for (const name of readdirSync(SKILLS_SRC)) {
     const src = join(SKILLS_SRC, name);
@@ -240,7 +268,7 @@ async function start(engineArg?: string) {
   if (!engine) {
     const argv = process.argv.slice(2);
     const startIdx = argv.indexOf("start");
-    passthrough = argv.slice(startIdx + 1).filter(a => !argv[startIdx + 1] || !/^(claude|codex|zcode)$/.test(a));
+    passthrough = argv.slice(startIdx + 1).filter(a => !/^(claude|codex|zcode)$/.test(a));
     if (process.stdin.isTTY) {
       // 交互菜单：选谁就把谁存为默认引擎（切换）；直接回车 = 用当前默认
       const defaultIdx = Math.max(0, ENGINES.indexOf(cfg.defaultEngine));
@@ -261,10 +289,10 @@ async function start(engineArg?: string) {
   const a = ADAPTERS[engine];
   if (!a) { console.error(`未知引擎: ${engine}`); process.exit(1); }
   if (!which(a.cmd)) { console.error(`${a.cmd} 未安装，先运行 ai-kit install ${engine}`); process.exit(1); }
-  const apiKey = resolveApiKey(cfg);
+  const { apiKey } = resolveEndpoint(cfg, engine);
   const child = spawnSync(a.cmd, passthrough ?? process.argv.slice(process.argv.indexOf("start") + 2), {
     stdio: "inherit",
-    env: { ...process.env, AI_KIT_API_KEY: apiKey, apiKeyEnv: undefined },
+    env: { ...process.env, AI_KIT_API_KEY: apiKey },
   });
   process.exit(child.status ?? 0);
 }
@@ -274,9 +302,16 @@ async function status() {
   for (const e of ENGINES) {
     const a = ADAPTERS[e];
     const ok = a.installed();
-    console.log(`${ok ? "●" : "○"} ${e.padEnd(7)} ${ok ? (which(a.cmd) ? "已安装" : "有配置目录，CLI 未在 PATH") : "未安装"}${cfg?.defaultEngine === e ? "  ← 默认" : ""}`);
+    let extra = "";
+    if (cfg) {
+      try {
+        const { ep } = resolveEndpoint(cfg, e);
+        extra = `  ${ep.model}`;
+      } catch { extra = "  ⚠ provider 未配置"; }
+    }
+    console.log(`${ok ? "●" : "○"} ${e.padEnd(7)} ${ok ? "已安装" : "未安装"}${extra}${cfg?.defaultEngine === e ? "  ← 默认" : ""}`);
   }
-  console.log(`\nconfig: ${CONFIG_PATH}`);
+  console.log(`\nconfig: ${CONFIG_PATH}${cfg?.providers ? `  providers: ${Object.keys(cfg.providers).join(", ")}` : ""}`);
   console.log(`skills: ${SKILLS_SRC} (${existsSync(SKILLS_SRC) ? readdirSync(SKILLS_SRC).filter(n => existsSync(join(SKILLS_SRC, n, "SKILL.md"))).length : 0} 个)`);
 }
 
