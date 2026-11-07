@@ -1,14 +1,5 @@
 #!/usr/bin/env bun
-/**
- * ai-kit — one config, one skills repo, three AI coding engines.
- *
- * 用法:
- *   ai-kit                首次进入引导（选引擎/自动下载/设默认）；之后=启动默认引擎（自动检查更新+skills）
- *   ai-kit change_engine  切换默认引擎
- *   ai-kit apply          手动重新写入 LLM 配置 + skills
- *   ai-kit install [e]    安装引擎
- *   ai-kit status         查看状态
- */
+/** ai-kit — 一份 config + 一个 skills 仓库，通吃 claude/codex/zcode。用法: ai-kit | change_engine | apply | install [e] | status */
 
 import { $ } from "bun";
 import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync, symlinkSync, statSync } from "node:fs";
@@ -18,7 +9,7 @@ import { spawnSync } from "node:child_process";
 
 const ROOT = resolve(dirname(import.meta.path), "..");
 const HOME = homedir();
-const CONFIG_PATH = join(HOME, ".ai-kit", ".config.json"); // 点开头，天然不会进 git
+const CONFIG_PATH = join(HOME, ".ai-kit", ".config.json");
 const ZSHRC = join(HOME, ".zshrc");
 const BEGIN = "# >>> ai-kit begin >>>";
 const END = "# <<< ai-kit end <<<";
@@ -40,7 +31,6 @@ interface ProtocolEndpoint {
 
 interface EngineModel {
   model: string;
-  /** 仅 Claude Code 有小模型（ANTHROPIC_SMALL_FAST_MODEL） */
   smallModel?: string;
 }
 
@@ -48,14 +38,11 @@ interface Config {
   defaultEngine: Engine;
   apiKey: string;
   skillsDir?: string;
-  /** 两个协议的 baseUrl：anthropic 给 claude/zcode，openai 给 codex */
   anthropic: ProtocolEndpoint;
   openai: ProtocolEndpoint;
-  /** 各引擎自己的模型：claude 主+小，其他单模型 */
   claude: EngineModel;
   codex: EngineModel;
   zcode: EngineModel;
-  /** 内部状态：alias 是否已询问/安装 */
   aliasInstalled?: boolean;
 }
 
@@ -64,7 +51,6 @@ interface Config {
 interface Adapter {
   name: string;
   cmd: string;
-  /** npm 包名（zcode 无，走客户端） */
   pkg?: string;
   installed: () => boolean;
   install: () => Promise<void>;
@@ -202,14 +188,13 @@ function resolveEndpoint(cfg: Config, engine: Engine): { ep: { baseUrl: string; 
   return { ep: { baseUrl, model: em.model, smallModel: em.smallModel }, apiKey: cfg.apiKey };
 }
 
-/** skills 来源：config.skillsDir 指向用户独立的 skills 仓库 */
 function skillsSrc(cfg?: Config): string | null {
   const d = cfg?.skillsDir;
   if (!d) return null;
   return d.startsWith("~") ? join(HOME, d.slice(1)) : resolve(d);
 }
 
-/** 自动把 skills 软链进各引擎（apply / start 时自动执行）；skills 是 git 仓库时先 pull 最新 */
+/** 启动时自动 pull skills 仓库并软链进各引擎 */
 async function autoSync(cfg: Config): Promise<void> {
   const src = skillsSrc(cfg);
   if (!src || !existsSync(src)) return;
@@ -219,7 +204,7 @@ async function autoSync(cfg: Config): Promise<void> {
       if (r.status === 0 && r.stdout?.trim().match(/files? changed|Fast-forward/)) {
         console.log(`  ✓ skills 仓库已更新: ${r.stdout.trim().split("\n")[0]}`);
       }
-    } catch { /* 网络不通/非 git 仓库就跳过，别挡启动 */ }
+    } catch {  }
   }
   for (const name of readdirSync(src)) {
     const skillPath = join(src, name);
@@ -237,8 +222,6 @@ async function autoSync(cfg: Config): Promise<void> {
     }
   }
 }
-
-// ---------- 交互 ----------
 
 async function askLine(prompt: string): Promise<string> {
   process.stdout.write(prompt);
@@ -266,7 +249,7 @@ async function setDefault(cfg: Config, engine: Engine): Promise<Config> {
   return cfg;
 }
 
-/** 首次进入：生成 config + 选引擎（没有就下载）+ 设默认 */
+
 async function onboard(): Promise<Config> {
   console.log("=== ai-kit 首次设置 ===\n");
   const tpl = readFileSync(join(ROOT, "config.example.json"), "utf8");
@@ -284,7 +267,7 @@ async function onboard(): Promise<Config> {
   return setDefault(cfg, engine);
 }
 
-/** 首次启动询问一次：是否加全局 alias */
+
 async function maybeAlias(cfg: Config): Promise<Config> {
   if (cfg.aliasInstalled !== undefined) return cfg;
   if (!process.stdin.isTTY) return cfg;
@@ -307,7 +290,7 @@ async function maybeAlias(cfg: Config): Promise<Config> {
   return cfg;
 }
 
-/** 每次启动都实时检查引擎新版本，有就自动升级 */
+
 async function autoUpdate(engine: Engine): Promise<void> {
   const a = ADAPTERS[engine];
   if (!a.pkg || !which("npm")) return;
@@ -318,7 +301,7 @@ async function autoUpdate(engine: Engine): Promise<void> {
       console.log(`⬆ ${engine} 有新版本 ${cur} → ${latest}，更新中...`);
       await a.install();
     }
-  } catch { /* 网络不通就跳过，别挡启动 */ }
+  } catch {  }
 }
 
 // ---------- 命令 ----------
@@ -356,8 +339,7 @@ async function start(engineArg?: string) {
   }
   await autoUpdate(engine);
   const { apiKey } = resolveEndpoint(cfg, engine);
-  await autoSync(cfg); // 启动前自动链入最新 skills
-  const argv = process.argv.slice(2);
+  await autoSync(cfg);   const argv = process.argv.slice(2);
   const startIdx = argv.indexOf("start");
   const passthrough = startIdx >= 0 ? argv.slice(startIdx + 1).filter(x => !/^(claude|codex|zcode)$/.test(x)) : [];
   const child = spawnSync(a.cmd, passthrough, { stdio: "inherit", env: { ...process.env, AI_KIT_API_KEY: apiKey } });
