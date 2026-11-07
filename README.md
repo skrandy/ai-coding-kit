@@ -1,6 +1,6 @@
 # ai-coding-kit
 
-一份 config、一个 skills 文件夹，通吃三个 AI coding 引擎：**Claude Code / Codex / ZCode**。
+一份 config、一个 skills 仓库（独立 git），通吃三个 AI coding 引擎：**Claude Code / Codex / ZCode**。
 
 ## 快速开始
 
@@ -10,8 +10,7 @@ ai-kit init            # 生成 ~/.ai-kit/config.json（或用仓库内 config.j
 # 编辑 config.json：填 baseUrl / model / apiKeyEnv
 export AI_KIT_API_KEY=sk-xxx
 ai-kit install         # 安装 claude / codex（zcode 走客户端）
-ai-kit apply           # 把 LLM 配置写入各引擎
-ai-kit sync            # skills/* 软链进各引擎
+ai-kit apply           # 写入 LLM 配置 + 自动把 skills 链进各引擎
 ai-kit use codex       # 直接切换默认引擎
 ai-kit start           # 交互菜单选引擎：选谁谁就变成新默认；回车 = 直接跑当前默认
 ai-kit start claude    # 跳过菜单直接启动指定引擎

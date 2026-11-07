@@ -1,7 +1,4 @@
 config.json
 node_modules/
 .DS_Store
-
-# skills 是用户自己配的，不进主仓库；想版本管理请用独立的 skills 仓库
-skills/*
-!skills/README.md
+skills/

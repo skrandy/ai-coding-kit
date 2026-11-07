@@ -5,8 +5,7 @@
  * Usage:
  *   ai-kit init                      生成 config.json 模板
  *   ai-kit install [engine]          安装引擎 (claude | codex | zcode)，无参数装全部
- *   ai-kit apply                     把 config.json 写入各引擎的 LLM 配置
- *   ai-kit sync                      把 skills/* 软链进各引擎的 skills 目录
+ *   ai-kit apply                     把 config.json 写入各引擎 + 自动链入 skills
  *   ai-kit use <engine>              设置默认引擎
  *   ai-kit start [engine]            启动引擎：带参数直接启动；不带参数交互选择并记住默认
  *   ai-kit status                    查看各引擎安装/配置状态
@@ -21,14 +20,35 @@ import { spawnSync } from "node:child_process";
 const ROOT = resolve(dirname(import.meta.path), "..");   // repo root (src/.. )
 const HOME = homedir();
 const CONFIG_PATH = join(HOME, ".ai-kit", "config.json"); // key 就放在这个文件里，不会进 git
-const DEFAULT_SKILLS_SRC = join(ROOT, "skills");           // 兜底：本项目 skills/ 目录
 
-/** skills 来源：config.skillsDir（独立 skills 仓库）优先，否则用本项目 skills/ */
-const skillsSrc = (cfg?: Config): string => {
+/** skills 来源：config.skillsDir 指向用户独立的 skills 仓库 */
+const skillsSrc = (cfg?: Config): string | null => {
   const d = cfg?.skillsDir;
-  if (!d) return DEFAULT_SKILLS_SRC;
+  if (!d) return null;
   return d.startsWith("~") ? join(HOME, d.slice(1)) : resolve(d);
 };
+
+/** 自动把 skills 软链进各引擎（apply / start 时自动执行，无需手动跑） */
+async function autoSync(cfg?: Config): Promise<void> {
+  cfg = cfg ?? (existsSync(CONFIG_PATH) ? JSON.parse(readFileSync(CONFIG_PATH, "utf8")) as Config : undefined);
+  const src = skillsSrc(cfg);
+  if (!src || !existsSync(src)) return;
+  for (const name of readdirSync(src)) {
+    const skillPath = join(src, name);
+    if (statSync(skillPath).isFile()) continue; // 跳过 README 等散文件
+    if (!existsSync(join(skillPath, "SKILL.md"))) continue;
+    for (const e of ENGINES) {
+      const a = ADAPTERS[e];
+      if (!a.installed()) continue;
+      const dir = a.skillsDir();
+      mkdirSync(dir, { recursive: true });
+      const dest = join(dir, name);
+      if (existsSync(dest)) continue;
+      symlinkSync(skillPath, dest);
+      console.log(`  ✓ skills: ${name} → ${dest}`);
+    }
+  }
+}
 
 type Engine = "claude" | "codex" | "zcode";
 type Protocol = "anthropic" | "openai";
@@ -226,30 +246,11 @@ async function install(engineArg?: string) {
 
 async function apply() {
   const cfg = loadConfig();
+  await autoSync(cfg); // skills 自动链入，无需手动 sync
   for (const e of ENGINES) {
     if (!ADAPTERS[e].installed()) { console.log(`- ${e} 未安装，跳过配置`); continue; }
     const { ep, apiKey } = resolveEndpoint(cfg, e);
     await ADAPTERS[e].applyConfig(e, ep, apiKey);
-  }
-}
-
-async function sync() {
-  const cfg = loadConfig();
-  const src = skillsSrc(cfg);
-  if (!existsSync(src)) { console.log(`skills 目录不存在: ${src}（config.json 的 skillsDir 或项目 skills/）`); return; }
-  for (const name of readdirSync(src)) {
-    const skillPath = join(src, name);
-    if (statSync(skillPath).isFile()) continue; // 跳过 README 等散文件
-    for (const e of ENGINES) {
-      const a = ADAPTERS[e];
-      if (!a.installed()) continue;
-      const dir = a.skillsDir();
-      mkdirSync(dir, { recursive: true });
-      const dest = join(dir, name);
-      if (existsSync(dest)) { console.log(`  = ${e}:${name} 已存在，跳过`); continue; }
-      symlinkSync(skillPath, dest);
-      console.log(`  ✓ ${e}:${name} → ${dest}`);
-    }
   }
 }
 
@@ -291,6 +292,7 @@ async function start(engineArg?: string) {
   if (!a) { console.error(`未知引擎: ${engine}`); process.exit(1); }
   if (!which(a.cmd)) { console.error(`${a.cmd} 未安装，先运行 ai-kit install ${engine}`); process.exit(1); }
   const { apiKey } = resolveEndpoint(cfg, engine);
+  await autoSync(cfg); // 启动前自动链入最新 skills
   const child = spawnSync(a.cmd, passthrough ?? process.argv.slice(process.argv.indexOf("start") + 2), {
     stdio: "inherit",
     env: { ...process.env, AI_KIT_API_KEY: apiKey },
@@ -313,19 +315,19 @@ async function status() {
     console.log(`${ok ? "●" : "○"} ${e.padEnd(7)} ${ok ? "已安装" : "未安装"}${extra}${cfg?.defaultEngine === e ? "  ← 默认" : ""}`);
   }
   console.log(`\nconfig: ${CONFIG_PATH}${cfg?.anthropic ? `  anthropic: ${cfg.anthropic.model}` : ""}${cfg?.openai ? `  openai: ${cfg.openai.model}` : ""}`);
-  console.log(`skills: ${skillsSrc(cfg)} (${existsSync(skillsSrc(cfg)) ? readdirSync(skillsSrc(cfg)).filter(n => existsSync(join(skillsSrc(cfg), n, "SKILL.md"))).length : 0} 个)`);
+  const src = skillsSrc(cfg);
+  console.log(`skills: ${src ?? "未配置 skillsDir"}${src && existsSync(src) ? ` (${readdirSync(src).filter(n => existsSync(join(src, n, "SKILL.md"))).length} 个)` : ""}`);
 }
 
 // ---------- 入口 ----------
 
 const [cmd, ...rest] = process.argv.slice(2);
-const help = () => console.log(`用法: ai-kit <init|install|apply|sync|use|start|status> [参数]`);
+const help = () => console.log(`用法: ai-kit <init|install|apply|use|start|status> [参数]`);
 
 switch (cmd) {
   case "init": await init(); break;
   case "install": await install(rest[0]); break;
   case "apply": await apply(); break;
-  case "sync": await sync(); break;
   case "use": await use(rest[0] ?? ""); break;
   case "start": await start(rest[0]); break;
   case "status": await status(); break;
