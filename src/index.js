@@ -1,68 +1,32 @@
 #!/usr/bin/env node
-/** ai-kit — 一份 config + 一个 skills 仓库，通吃 claude/codex/zcode。用法: ai-kit | change_engine | apply | install [e] | status */
+/** ai-kit — 一份 config + 一个 skills 仓库，通吃 claude-code/codex/zcode。用法: ai-kit | change_engine | install [e] | status */
 
 import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync, symlinkSync, statSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { homedir } from "node:os";
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
-const ROOT = resolve(dirname((import.meta as any).filename ?? import.meta.path), "..");
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const HOME = homedir();
-const CONFIG_PATH = join(ROOT, ".config.json"); // 仓库根目录，点开头不会进 git
+const CONFIG_PATH = join(ROOT, ".config.json");
 const ZSHRC = join(HOME, ".zshrc");
 const BEGIN = "# >>> ai-kit begin >>>";
 const END = "# <<< ai-kit end <<<";
-const SELF = "bun " + join(ROOT, "src", "index.ts");
+const SELF = "ai-kit";
 
-type Engine = "claude-code" | "codex" | "zcode";
-type Protocol = "anthropic" | "openai";
-const ENGINES: Engine[] = ["claude-code", "codex", "zcode"];
+const ENGINES = ["claude-code", "codex", "zcode"];
 
-interface ProtocolEndpoint {
-  baseUrl: string;
-}
-
-interface EngineModel {
-  model: string;
-  smallModel?: string;
-}
-
-interface Config {
-  defaultEngine: Engine;
-  apiKey: string;
-  skillsDir?: string;
-  anthropic: ProtocolEndpoint;
-  openai: ProtocolEndpoint;
-  claude: EngineModel;
-  codex: EngineModel;
-  zcode: EngineModel;
-  aliasInstalled?: boolean;
-}
-
-// ---------- 引擎适配层 ----------
-
-interface Adapter {
-  name: string;
-  cmd: string;
-  /** bypass 模式的启动参数 */
-  bypassArgs?: string[];
-  pkg?: string;
-  installed: () => boolean;
-  install: () => Promise<void>;
-  applyConfig: (engine: Engine, ep: { baseUrl: string; model: string; smallModel?: string }, apiKey: string) => Promise<void>;
-  skillsDir: () => string;
-}
-
-const readJson = <T>(p: string): T | null => {
-  try { return JSON.parse(readFileSync(p, "utf8")) as T; } catch { return null; }
+const readJson = (p) => {
+  try { return JSON.parse(readFileSync(p, "utf8")); } catch { return null; }
 };
 
-const writeJson = (p: string, data: unknown) => {
+const writeJson = (p, data) => {
   mkdirSync(dirname(p), { recursive: true });
   writeFileSync(p, JSON.stringify(data, null, 2) + "\n");
 };
 
-const claude: Adapter = {
+const claude = {
   name: "claude-code",
   cmd: "claude",
   bypassArgs: ["--dangerously-skip-permissions"],
@@ -73,7 +37,7 @@ const claude: Adapter = {
   },
   async applyConfig(_engine, ep, apiKey) {
     const p = join(HOME, ".claude", "settings.json");
-    const settings = readJson<Record<string, any>>(p) ?? {};
+    const settings = readJson(p) ?? {};
     settings.env = {
       ...(settings.env ?? {}),
       ANTHROPIC_BASE_URL: ep.baseUrl,
@@ -87,7 +51,7 @@ const claude: Adapter = {
   skillsDir: () => join(HOME, ".claude", "skills"),
 };
 
-const codex: Adapter = {
+const codex = {
   name: "codex",
   cmd: "codex",
   bypassArgs: ["--dangerously-bypass-approvals-and-sandbox"],
@@ -124,7 +88,7 @@ const codex: Adapter = {
   skillsDir: () => join(HOME, ".codex", "skills"),
 };
 
-const zcode: Adapter = {
+const zcode = {
   name: "zcode",
   cmd: "zcode",
   installed: () => existsSync(join(HOME, ".zcode")) || which("zcode"),
@@ -133,7 +97,7 @@ const zcode: Adapter = {
   },
   async applyConfig(_engine, ep, apiKey) {
     const p = join(HOME, ".zcode", "settings.json");
-    const settings = readJson<Record<string, any>>(p) ?? {};
+    const settings = readJson(p) ?? {};
     settings["ai-kit"] = {
       baseUrl: ep.baseUrl,
       model: ep.model,
@@ -146,56 +110,50 @@ const zcode: Adapter = {
   skillsDir: () => join(HOME, ".zcode", "skills"),
 };
 
-const ADAPTERS: Record<Engine, Adapter> = { "claude-code": claude, codex, zcode };
-
-// ---------- 工具函数 ----------
+const ADAPTERS = { "claude-code": claude, codex, zcode };
 
 const WIN = process.platform === "win32";
 
-function run(cmd: string, args: string[]): Promise<void> {
+function run(cmd, args) {
   return new Promise((ok, err) => {
     const c = spawnSync(cmd, args, { stdio: "inherit", shell: WIN });
     c.status === 0 ? ok() : err(new Error(`${cmd} 退出码 ${c.status}`));
   });
 }
 
-function which(cmd: string): boolean {
-  return spawnSync("which", [cmd], { stdio: "ignore" }).status === 0;
+function which(cmd) {
+  return spawnSync("which", [cmd], { stdio: "ignore", shell: WIN }).status === 0;
 }
 
-function loadConfig(): Config {
+function loadConfig() {
   if (!existsSync(CONFIG_PATH)) {
     console.error(`未找到配置文件 ${CONFIG_PATH}，先运行 ai-kit（首次引导会自动生成）`);
     process.exit(1);
   }
-  return JSON.parse(readFileSync(CONFIG_PATH, "utf8")) as Config;
+  return JSON.parse(readFileSync(CONFIG_PATH, "utf8"));
 }
 
-function saveConfig(cfg: Config) {
+function saveConfig(cfg) {
   mkdirSync(dirname(CONFIG_PATH), { recursive: true });
   writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2) + "\n");
 }
 
-function resolveEndpoint(cfg: Config, engine: Engine): { ep: { baseUrl: string; model: string; smallModel?: string }; apiKey: string } {
+function resolveEndpoint(cfg, engine) {
   const em = cfg.engines?.[engine];
-  if (!em?.model) throw new Error(`config.json 里没有配置 ${engine} 的 model，请编辑 ${CONFIG_PATH}`);
+  if (!em?.model) throw new Error(`.config.json 里没有配置 ${engine} 的 model，请编辑 ${CONFIG_PATH}`);
   const baseUrl = cfg.llm?.[em.protocol]?.baseUrl;
-  if (!baseUrl) {
-    console.error(`config.json 里没有配置 llm.${em.protocol}.baseUrl（引擎 ${engine} 走 ${em.protocol} 协议），请编辑 ${CONFIG_PATH}`);
-    process.exit(1);
-  }
-  if (!cfg.apiKey) throw new Error(`config.json 里没有 apiKey，请运行 ai-kit 按提示填写（或编辑 ${CONFIG_PATH}）`);
+  if (!baseUrl) throw new Error(`.config.json 里没有配置 llm.${em.protocol}.baseUrl（引擎 ${engine} 走 ${em.protocol} 协议），请编辑 ${CONFIG_PATH}`);
+  if (!cfg.apiKey) throw new Error(`.config.json 里没有 apiKey，请运行 ai-kit 按提示填写（或编辑 ${CONFIG_PATH}）`);
   return { ep: { baseUrl, model: em.model, smallModel: em.smallModel }, apiKey: cfg.apiKey };
 }
 
-function skillsSrc(cfg?: Config): string | null {
+function skillsSrc(cfg) {
   const d = cfg?.skillsDir?.trim();
-  if (!d) return join(ROOT, "skills"); // 默认：仓库 skills/ 文件夹
+  if (!d) return join(ROOT, "skills");
   return d.startsWith("~") ? join(HOME, d.slice(1)) : resolve(d);
 }
 
-/** 启动时自动 pull skills 仓库并软链进各引擎 */
-async function autoSync(cfg: Config): Promise<void> {
+async function autoSync(cfg) {
   const src = skillsSrc(cfg);
   if (!src || !existsSync(src)) return;
   if (existsSync(join(src, ".git"))) {
@@ -204,7 +162,7 @@ async function autoSync(cfg: Config): Promise<void> {
       if (r.status === 0 && r.stdout?.trim().match(/files? changed|Fast-forward/)) {
         console.log(`  ✓ skills 仓库已更新: ${r.stdout.trim().split("\n")[0]}`);
       }
-    } catch {  }
+    } catch { }
   }
   for (const name of readdirSync(src)) {
     const skillPath = join(src, name);
@@ -223,24 +181,24 @@ async function autoSync(cfg: Config): Promise<void> {
   }
 }
 
-async function askLine(prompt: string): Promise<string> {
+async function askLine(prompt) {
   process.stdout.write(prompt);
   return (await new Response(process.stdin).text()).trim();
 }
 
-async function pickEngine(cfg: Config, title: string): Promise<Engine> {
+async function pickEngine(cfg, title) {
   console.log(title);
   ENGINES.forEach((e, i) =>
     console.log(`  ${i + 1}. ${e}${e === cfg.defaultEngine ? "  ← 默认" : ""}${ADAPTERS[e].installed() ? "" : "  (未安装，选中后自动下载)"}`)
   );
   const answer = await askLine(`输入序号或名称 [回车=${cfg.defaultEngine}]: `);
-  let engine: Engine | undefined;
+  let engine;
   if (/^\d$/.test(answer)) engine = ENGINES[Number(answer) - 1];
-  else if (ENGINES.includes(answer as Engine)) engine = answer as Engine;
+  else if (ENGINES.includes(answer)) engine = answer;
   return engine ?? cfg.defaultEngine;
 }
 
-async function setDefault(cfg: Config, engine: Engine): Promise<Config> {
+async function setDefault(cfg, engine) {
   if (engine !== cfg.defaultEngine) {
     cfg.defaultEngine = engine;
     saveConfig(cfg);
@@ -249,9 +207,7 @@ async function setDefault(cfg: Config, engine: Engine): Promise<Config> {
   return cfg;
 }
 
-
-/** 缺什么问什么：apiKey / 协议地址 / 模型，答完即存进 .config.json */
-async function promptMissing(cfg: Config, engine: Engine): Promise<Config> {
+async function promptMissing(cfg, engine) {
   if (!process.stdin.isTTY) return cfg;
   console.log("检测到配置不完整，来补全一下（回车跳过表示稍后自己改配置文件）：\n");
   if (!cfg.apiKey) {
@@ -277,16 +233,15 @@ async function promptMissing(cfg: Config, engine: Engine): Promise<Config> {
   return cfg;
 }
 
-/** 首次进入：生成 config → 问 apiKey/协议地址 → 选引擎（没有就下载）→ 问模型 → 设默认 */
-async function onboard(): Promise<Config> {
+async function onboard() {
   console.log("=== ai-kit 首次设置 ===\n");
   const tpl = readFileSync(join(ROOT, "config.example.json"), "utf8");
-  saveConfig(JSON.parse(tpl) as Config);
+  saveConfig(JSON.parse(tpl));
   console.log(`已生成配置 ${CONFIG_PATH}\n`);
 
   let cfg = loadConfig();
   cfg = await promptMissing(cfg, "claude-code");
-  const engine = await pickEngine({ ...cfg, defaultEngine: "claude-code" } as Config, "选择你的 AI coding 引擎：");
+  const engine = await pickEngine({ ...cfg, defaultEngine: "claude-code" }, "选择你的 AI coding 引擎：");
   cfg = await promptMissing(cfg, engine);
   const a = ADAPTERS[engine];
   if (!a.installed()) {
@@ -296,36 +251,26 @@ async function onboard(): Promise<Config> {
   return setDefault(cfg, engine);
 }
 
-
-/** 是否已通过 npm 全局安装（bin 在 PATH 里就不需要 alias） */
-function installedGlobal(): boolean {
-  return which("ai-kit");
+function installedGlobal() {
+  return which(SELF);
 }
 
-async function maybeAlias(cfg: Config): Promise<Config> {
+async function maybeAlias(cfg) {
   if (cfg.aliasInstalled !== undefined || WIN || installedGlobal()) return cfg;
   if (!process.stdin.isTTY) return cfg;
-  const yes = (await askLine("是否把 ai / ai-kit 加入全局命令（写进 ~/.zshrc 托管块）？[Y/n]: ")).toLowerCase();
+  const yes = (await askLine("是否把 ai-kit 加入全局命令（写进 ~/.zshrc 托管块）？[Y/n]: ")).toLowerCase();
   if (yes === "" || yes === "y" || yes === "yes") {
     const cur = existsSync(ZSHRC) ? readFileSync(ZSHRC, "utf8") : "";
     const stripped = cur.replace(new RegExp(`${BEGIN}[\\s\\S]*?${END}\\n?`, "g"), "");
-    const block = [
-      BEGIN,
-      `alias ai-kit='${SELF}'`,
-      `alias ai='${SELF} start'`,
-      END,
-      "",
-    ].join("\n");
-    writeFileSync(ZSHRC, stripped + block);
-    console.log("已添加。新终端生效：ai（启动默认引擎）、ai-kit（完整命令）");
+    writeFileSync(ZSHRC, stripped + [BEGIN, `alias ai-kit='node ${join(ROOT, "src", "index.js")}'`, END, ""].join("\n"));
+    console.log("已添加。新终端生效。");
   }
   cfg.aliasInstalled = true;
   saveConfig(cfg);
   return cfg;
 }
 
-
-async function autoUpdate(engine: Engine): Promise<void> {
+async function autoUpdate(engine) {
   const a = ADAPTERS[engine];
   if (!a.pkg || !which("npm")) return;
   try {
@@ -335,13 +280,11 @@ async function autoUpdate(engine: Engine): Promise<void> {
       console.log(`⬆ ${engine} 有新版本 ${cur} → ${latest}，更新中...`);
       await a.install();
     }
-  } catch {  }
+  } catch { }
 }
 
-// ---------- 命令 ----------
-
-async function install(engineArg?: string) {
-  const targets = engineArg ? [engineArg as Engine] : ENGINES;
+async function install(engineArg) {
+  const targets = engineArg ? [engineArg] : ENGINES;
   for (const e of targets) {
     const a = ADAPTERS[e];
     if (!a) { console.error(`未知引擎: ${e}`); continue; }
@@ -351,10 +294,10 @@ async function install(engineArg?: string) {
   }
 }
 
-async function start(engineArg?: string) {
+async function start(engineArg) {
   let cfg = existsSync(CONFIG_PATH) ? loadConfig() : await onboard();
   cfg = await maybeAlias(cfg);
-  const engine = (engineArg ?? cfg.defaultEngine) as Engine;
+  const engine = engineArg ?? cfg.defaultEngine;
   const a = ADAPTERS[engine];
   if (!a) { console.error(`未知引擎: ${engine}`); process.exit(1); }
   if (!which(a.cmd)) {
@@ -362,14 +305,13 @@ async function start(engineArg?: string) {
     await a.install();
   }
   await autoUpdate(engine);
-  // 缺字段就现场问（TTY），非 TTY 走 resolveEndpoint 的报错提示
-  const em0 = cfg.engines[engine];
-  if (!cfg.apiKey || !em0?.model || !cfg.llm[em0?.protocol ?? "anthropic"]?.baseUrl) {
+  const em0 = cfg.engines?.[engine];
+  if (!cfg.apiKey || !em0?.model || !cfg.llm?.[em0?.protocol ?? "anthropic"]?.baseUrl) {
     cfg = await promptMissing(cfg, engine);
   }
-  let apiKey: string;
+  let apiKey;
   try { ({ apiKey } = resolveEndpoint(cfg, engine)); }
-  catch (e) { console.error((e as Error).message); process.exit(1); }
+  catch (e) { console.error(e.message); process.exit(1); }
   for (const e of ENGINES) {
     const ae = ADAPTERS[e];
     if (!ae.installed()) continue;
@@ -380,9 +322,7 @@ async function start(engineArg?: string) {
   }
   await autoSync(cfg);
   const argv = process.argv.slice(2);
-  const startIdx = argv.indexOf("start");
-  const passthrough = startIdx >= 0 ? argv.slice(startIdx + 1).filter(x => !/^(claude-code|codex|zcode)$/.test(x)) : [];
-  // 权限模式：默认 bypass（全自动），每次启动可选
+  const passthrough = argv.slice(1).filter(x => !ENGINES.includes(x));
   let mode = "bypass";
   if (process.stdin.isTTY) {
     process.stdout.write(`权限模式 [回车=bypass 全自动 / 输入 n=默认审批]: `);
@@ -409,14 +349,12 @@ async function status() {
     if (cfg) {
       try { const r = resolveEndpoint(cfg, e); extra = `  ${r.ep.model} (${cfg.engines[e].protocol})`; } catch { extra = "  ⚠ 配置不全"; }
     }
-    console.log(`${ok ? "●" : "○"} ${e.padEnd(7)} ${ok ? "已安装" : "未安装"}${extra}${cfg?.defaultEngine === e ? "  ← 默认" : ""}`);
+    console.log(`${ok ? "●" : "○"} ${e.padEnd(12)} ${ok ? "已安装" : "未安装"}${extra}${cfg?.defaultEngine === e ? "  ← 默认" : ""}`);
   }
   console.log(`\nconfig: ${CONFIG_PATH}`);
-  const src = skillsSrc(cfg);
-  console.log(`skills: ${src ?? "未配置 skillsDir"}${src && existsSync(src) ? ` (${readdirSync(src).filter(n => existsSync(join(src, n, "SKILL.md"))).length} 个)` : ""}`);
+  const src = skillsSrc(cfg ?? {});
+  console.log(`skills: ${src}${existsSync(src) ? ` (${readdirSync(src).filter(n => existsSync(join(src, n, "SKILL.md"))).length} 个)` : " (不存在)"}`);
 }
-
-// ---------- 入口 ----------
 
 const [cmd, ...rest] = process.argv.slice(2);
 
@@ -434,9 +372,13 @@ switch (cmd) {
     if (!existsSync(CONFIG_PATH)) await onboard();
     else console.log(`已存在 ${CONFIG_PATH}`);
     break;
-  case "install": await install(rest[0]); break;
-  case "status": await status(); break;
+  case "install":
+    await install(rest[0]);
+    break;
+  case "status":
+    await status();
+    break;
   default:
-    if (ENGINES.includes(cmd as Engine)) await start(cmd);
+    if (ENGINES.includes(cmd)) await start(cmd);
     else console.log(`用法: ai-kit [start|claude-code|codex|zcode|change_engine|install|status]`);
 }
