@@ -1,20 +1,20 @@
 {
   "defaultEngine": "claude",
-  "apiKey": "sk-xxx",
+  "apiKey": "",
   "anthropic": {
-    "baseUrl": "https://..."
+    "baseUrl": ""
   },
   "openai": {
-    "baseUrl": "https://..."
+    "baseUrl": ""
   },
   "claude": {
-    "model": "glm-4.7",
-    "smallModel": "glm-4.5-air"
+    "model": "",
+    "smallModel": ""
   },
   "codex": {
-    "model": "glm-4.7"
+    "model": ""
   },
   "zcode": {
-    "model": "glm-4.7"
+    "model": ""
   }
 }

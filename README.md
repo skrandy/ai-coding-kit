@@ -27,12 +27,12 @@ ai-kit status          # 查看状态
 ```json
 {
   "defaultEngine": "claude",
-  "apiKey": "sk-xxx",
-  "anthropic": { "baseUrl": "https://..." },
-  "openai": { "baseUrl": "https://..." },
-  "claude": { "model": "glm-4.7", "smallModel": "glm-4.5-air" },
-  "codex": { "model": "glm-4.7" },
-  "zcode": { "model": "glm-4.7" }
+  "apiKey": "填你的key",
+  "anthropic": { "baseUrl": "填anthropic兼容地址" },
+  "openai": { "baseUrl": "填openai兼容地址" },
+  "claude": { "model": "主模型", "smallModel": "小模型" },
+  "codex": { "model": "模型" },
+  "zcode": { "model": "模型" }
 }
 ```
 
