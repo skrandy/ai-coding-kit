@@ -174,19 +174,13 @@ function saveConfig(cfg: Config) {
 
 function resolveEndpoint(cfg: Config, engine: Engine): { ep: { baseUrl: string; model: string; smallModel?: string }; apiKey: string } {
   const em = cfg.engines?.[engine];
-  if (!em?.model) {
-    console.error(`config.json 里没有配置 ${engine} 的 model，请编辑 ${CONFIG_PATH}`);
-    process.exit(1);
-  }
+  if (!em?.model) throw new Error(`config.json 里没有配置 ${engine} 的 model，请编辑 ${CONFIG_PATH}`);
   const baseUrl = cfg.llm?.[em.protocol]?.baseUrl;
   if (!baseUrl) {
     console.error(`config.json 里没有配置 llm.${em.protocol}.baseUrl（引擎 ${engine} 走 ${em.protocol} 协议），请编辑 ${CONFIG_PATH}`);
     process.exit(1);
   }
-  if (!cfg.apiKey) {
-    console.error(`config.json 里没有 apiKey，请编辑 ${CONFIG_PATH}`);
-    process.exit(1);
-  }
+  if (!cfg.apiKey) throw new Error(`config.json 里没有 apiKey，请运行 ai-kit 按提示填写（或编辑 ${CONFIG_PATH}）`);
   return { ep: { baseUrl, model: em.model, smallModel: em.smallModel }, apiKey: cfg.apiKey };
 }
 
@@ -369,8 +363,9 @@ async function start(engineArg?: string) {
   if (!cfg.apiKey || !em0?.model || !cfg.llm[em0?.protocol ?? "anthropic"]?.baseUrl) {
     cfg = await promptMissing(cfg, engine);
   }
-  const { apiKey } = resolveEndpoint(cfg, engine);
-  for (const e of ENGINES) {
+  let apiKey: string;
+  try { ({ apiKey } = resolveEndpoint(cfg, engine)); }
+  catch (e) { console.error((e as Error).message); process.exit(1); }
     const ae = ADAPTERS[e];
     if (!ae.installed()) continue;
     try {
