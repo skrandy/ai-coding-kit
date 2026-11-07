@@ -46,9 +46,8 @@ interface Config {
   skillsDir?: string;
   anthropic: Endpoint;
   openai: Endpoint;
-  /** 内部状态：alias 是否已询问/安装、上次更新检查时间 */
+  /** 内部状态：alias 是否已询问/安装 */
   aliasInstalled?: boolean;
-  lastUpdateCheck?: string;
 }
 
 // ---------- 引擎适配层 ----------
@@ -287,15 +286,10 @@ async function maybeAlias(cfg: Config): Promise<Config> {
   return cfg;
 }
 
-/** 每 24h 检查一次引擎更新，有新版自动升级 */
+/** 每次启动都实时检查引擎新版本，有就自动升级 */
 async function autoUpdate(engine: Engine): Promise<void> {
   const a = ADAPTERS[engine];
   if (!a.pkg || !which("npm")) return;
-  const cfg = loadConfig();
-  const last = cfg.lastUpdateCheck ? Date.parse(cfg.lastUpdateCheck) : 0;
-  if (Date.now() - last < 24 * 3600 * 1000) return;
-  cfg.lastUpdateCheck = new Date().toISOString();
-  saveConfig(cfg);
   try {
     const latest = (await $`npm view ${a.pkg} version`.quiet().text()).trim();
     const cur = (spawnSync(a.cmd, ["--version"], { encoding: "utf8" }).stdout ?? "").trim();
