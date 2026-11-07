@@ -366,6 +366,7 @@ async function start(engineArg?: string) {
   let apiKey: string;
   try { ({ apiKey } = resolveEndpoint(cfg, engine)); }
   catch (e) { console.error((e as Error).message); process.exit(1); }
+  for (const e of ENGINES) {
     const ae = ADAPTERS[e];
     if (!ae.installed()) continue;
     try {
