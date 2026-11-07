@@ -9,7 +9,7 @@
     "volcano": {
       "apiKey": "把你的火山方舟 API Key 填在这里",
       "anthropic": {
-        "baseUrl": "https://ark.cn-beijing.volces.com/api/anthropic",
+        "baseUrl": "https://ark.cn-beijing.volces.com/api/coding",
         "model": "claude-sonnet-4-5",
         "smallModel": "claude-haiku-4-5"
       },
