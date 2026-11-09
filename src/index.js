@@ -115,15 +115,27 @@ const ADAPTERS = { "claude-code": claude, codex, zcode };
 
 const WIN = process.platform === "win32";
 
+const q = (s) => (/[\s"]/.test(s) ? `"${s.replace(/"/g, '\\"')}"` : s);
+
+// WIN 下 npm/claude 多为 .cmd shim 须经 shell；args 数组走 shell 会被裸拼接（DEP0190），改为整条引号串
+function sh(cmd, args, opts = {}) {
+  return WIN
+    ? spawnSync([cmd, ...args].map(q).join(" "), { ...opts, shell: true })
+    : spawnSync(cmd, args, opts);
+}
+
 function run(cmd, args) {
   return new Promise((ok, err) => {
-    const c = spawnSync(cmd, args, { stdio: "inherit", shell: WIN });
+    const c = sh(cmd, args, { stdio: "inherit" });
     c.status === 0 ? ok() : err(new Error(`${cmd} 退出码 ${c.status}`));
   });
 }
 
 function which(cmd) {
-  return spawnSync("which", [cmd], { stdio: "ignore", shell: WIN }).status === 0;
+  if (!WIN) return spawnSync("which", [cmd], { stdio: "ignore" }).status === 0;
+  // 裸 "where" 依赖 PATH 里有 System32，绝对路径更稳
+  const w = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "where.exe");
+  return spawnSync(w, [cmd], { encoding: "utf8" }).status === 0;
 }
 
 function loadConfig() {
@@ -159,7 +171,7 @@ async function autoSync(cfg) {
   if (!src || !existsSync(src)) return;
   if (existsSync(join(src, ".git"))) {
     try {
-      const r = spawnSync("git", ["-C", src, "pull", "--ff-only"], { encoding: "utf8", timeout: 30000, shell: WIN });
+      const r = sh("git", ["-C", src, "pull", "--ff-only"], { encoding: "utf8", timeout: 30000 });
       if (r.status === 0 && r.stdout?.trim().match(/files? changed|Fast-forward/)) {
         console.log(`  ✓ skills 仓库已更新: ${r.stdout.trim().split("\n")[0]}`);
       }
@@ -279,8 +291,8 @@ async function autoUpdate(engine) {
   const a = ADAPTERS[engine];
   if (!a.pkg || !which("npm")) return;
   try {
-    const latest = (spawnSync("npm", ["view", a.pkg, "version"], { encoding: "utf8" }).stdout ?? "").trim();
-    const cur = ((spawnSync(a.cmd, ["--version"], { encoding: "utf8", shell: WIN }).stdout ?? "").match(/\d+\.\d+\.\d+/) ?? [""])[0];
+    const latest = (sh("npm", ["view", a.pkg, "version"], { encoding: "utf8" }).stdout ?? "").trim();
+    const cur = ((sh(a.cmd, ["--version"], { encoding: "utf8" }).stdout ?? "").match(/\d+\.\d+\.\d+/) ?? [""])[0];
     if (latest && cur && latest !== cur) {
       console.log(`⬆ ${engine} 有新版本 ${cur} → ${latest}，更新中...`);
       await a.install();
@@ -334,7 +346,7 @@ async function start(engineArg) {
     if (answer === "n" || answer === "normal") mode = "normal";
   }
   const extra = mode === "bypass" ? (a.bypassArgs ?? []) : [];
-  const child = spawnSync(a.cmd, [...extra, ...passthrough], { stdio: "inherit", env: { ...process.env, AI_KIT_API_KEY: apiKey }, shell: WIN });
+  const child = sh(a.cmd, [...extra, ...passthrough], { stdio: "inherit", env: { ...process.env, AI_KIT_API_KEY: apiKey } });
   process.exit(child.status ?? 0);
 }
 
