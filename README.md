@@ -5,7 +5,7 @@
 ## 用法
 
 ```bash
-npm i -g github:skrandy/ai-coding-kit   # 全局安装
+npm i -g github:skrandy/ai-coding-kit --allow-git=root   # 全局安装
 ai-kit                                  # 任何目录直接运行
 
 # 首次运行：选引擎（没装自动下载）→ 设默认 → 问一次全局 alias
