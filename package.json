@@ -1,7 +1,7 @@
 {
   "name": "ai-coding-kit",
   "version": "0.1.0",
-  "description": "One config, one skills folder, three AI coding engines (Claude Code / Codex / ZCode)",
+  "description": "One config, one skills folder, two AI coding engines (Claude Code / Codex)",
   "type": "module",
   "bin": {
     "ai-kit": "src/index.js"

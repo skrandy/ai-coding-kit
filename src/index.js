@@ -1,10 +1,11 @@
 #!/usr/bin/env node
-/** ai-kit — 一份 config + 一个 skills 仓库，通吃 claude-code/codex/zcode。用法: ai-kit | change_engine | install [e] | status */
+/** ai-kit — 一份 config + 一个 skills 仓库，通吃 claude-code / codex。用法: ai-kit | change_engine | install [e] | status */
 
 import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync, symlinkSync, statSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { homedir } from "node:os";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import * as readline from "node:readline/promises";
 
@@ -16,7 +17,7 @@ const BEGIN = "# >>> ai-kit begin >>>";
 const END = "# <<< ai-kit end <<<";
 const SELF = "ai-kit";
 
-const ENGINES = ["claude-code", "codex", "zcode"];
+const ENGINES = ["claude-code", "codex"];
 
 const readJson = (p) => {
   try { return JSON.parse(readFileSync(p, "utf8")); } catch { return null; }
@@ -30,7 +31,10 @@ const writeJson = (p, data) => {
 const claude = {
   name: "claude-code",
   cmd: "claude",
+  protocol: "anthropic",
   bypassArgs: ["--dangerously-skip-permissions"],
+  // 显式带模型：续接历史会话时也以 config 为准，不吃旧会话里锁死的模型
+  launchArgs: (ep) => ["--model", ep.model],
   pkg: "@anthropic-ai/claude-code",
   installed: () => existsSync(join(HOME, ".claude")) || which("claude"),
   async install() {
@@ -55,7 +59,16 @@ const claude = {
 const codex = {
   name: "codex",
   cmd: "codex",
+  protocol: "openai",
   bypassArgs: ["--dangerously-bypass-approvals-and-sandbox"],
+  // -m 覆盖续接会话里锁死的模型；model_provider 保证走的还是 ai-kit 这套地址
+  launchArgs: (ep) => ["-m", ep.model, "-c", 'model_provider="ai-kit"'],
+  // codex 有常驻 app-server daemon，key/地址是它自己进程的环境与配置，
+  // 换了 token 后不重启它，请求仍会带着旧 key 打旧地址
+  restartDaemon() {
+    const r = sh("codex", ["app-server", "daemon", "restart"], { stdio: "ignore", timeout: 20000 });
+    return r.status === 0;
+  },
   pkg: "@openai/codex",
   installed: () => existsSync(join(HOME, ".codex")) || which("codex"),
   async install() {
@@ -119,29 +132,7 @@ const codex = {
   skillsDir: () => join(HOME, ".codex", "skills"),
 };
 
-const zcode = {
-  name: "zcode",
-  cmd: "zcode",
-  installed: () => existsSync(join(HOME, ".zcode")) || which("zcode"),
-  async install() {
-    console.log("  ⚠ zcode 请从 ZCode 官网/客户端安装；本命令只负责配置与 skills。");
-  },
-  async applyConfig(_engine, ep, apiKey) {
-    const p = join(HOME, ".zcode", "settings.json");
-    const settings = readJson(p) ?? {};
-    settings["ai-kit"] = {
-      baseUrl: ep.baseUrl,
-      model: ep.model,
-      ...(ep.smallModel ? { smallModel: ep.smallModel } : {}),
-      apiKey,
-    };
-    writeJson(p, settings);
-    console.log(`  ✓ zcode → ${p}  (${ep.model} @ ${ep.baseUrl})`);
-  },
-  skillsDir: () => join(HOME, ".zcode", "skills"),
-};
-
-const ADAPTERS = { "claude-code": claude, codex, zcode };
+const ADAPTERS = { "claude-code": claude, codex };
 
 const WIN = process.platform === "win32";
 
@@ -168,12 +159,51 @@ function which(cmd) {
   return spawnSync(w, [cmd], { encoding: "utf8" }).status === 0;
 }
 
+// 老配置长这样：llm 地址写在根上（"anthropic"/"openai"），引擎配置也写在根上
+// （"claude"/"codex"），engines 里还带 protocol，外加已经不再支持的 zcode。
+// 读的时候就地转成现在的结构，省得升级后一堆没人读的键还留着。
+const LEGACY_NAME = { "claude-code": "claude" };
+
+function engineSection(src, engine) {
+  const raw = src.engines?.[engine] ?? src[LEGACY_NAME[engine] ?? engine] ?? {};
+  const out = { model: raw.model ?? "" };
+  if (engine === "claude-code") out.smallModel = raw.smallModel ?? "";
+  return out;
+}
+
+function normalizeConfig(prev) {
+  const rest = { ...prev };
+  for (const k of ["defaultEngine", "apiKey", "llm", "engines", "applied",
+    "anthropic", "openai", "claude", "codex", "zcode"]) delete rest[k];
+  const llm = {};
+  for (const proto of ["anthropic", "openai"]) {
+    llm[proto] = { baseUrl: prev.llm?.[proto]?.baseUrl ?? prev[proto]?.baseUrl ?? "" };
+  }
+  const defaultEngine = prev.defaultEngine === "claude" ? "claude-code" : prev.defaultEngine;
+  return {
+    defaultEngine: ENGINES.includes(defaultEngine) ? defaultEngine : ENGINES[0],
+    apiKey: prev.apiKey ?? "",
+    llm,
+    engines: Object.fromEntries(ENGINES.map(e => [e, engineSection(prev, e)])),
+    ...(prev.applied
+      ? { applied: Object.fromEntries(Object.entries(prev.applied).filter(([e]) => ENGINES.includes(e))) }
+      : {}),
+    ...rest,
+  };
+}
+
 function loadConfig() {
   if (!existsSync(CONFIG_PATH)) {
     console.error(`未找到配置文件 ${CONFIG_PATH}，先运行 ai-kit（首次引导会自动生成）`);
     process.exit(1);
   }
-  return JSON.parse(readFileSync(CONFIG_PATH, "utf8"));
+  const raw = JSON.parse(readFileSync(CONFIG_PATH, "utf8"));
+  const cfg = normalizeConfig(raw);
+  if (JSON.stringify(raw) !== JSON.stringify(cfg)) {
+    writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2) + "\n");
+    console.log(`  · ${CONFIG_PATH} 已转成新格式`);
+  }
+  return cfg;
 }
 
 function saveConfig(cfg) {
@@ -184,8 +214,9 @@ function saveConfig(cfg) {
 function resolveEndpoint(cfg, engine) {
   const em = cfg.engines?.[engine];
   if (!em?.model) throw new Error(`.config.json 里没有配置 ${engine} 的 model，请编辑 ${CONFIG_PATH}`);
-  const baseUrl = cfg.llm?.[em.protocol]?.baseUrl;
-  if (!baseUrl) throw new Error(`.config.json 里没有配置 llm.${em.protocol}.baseUrl（引擎 ${engine} 走 ${em.protocol} 协议），请编辑 ${CONFIG_PATH}`);
+  const proto = ADAPTERS[engine].protocol;
+  const baseUrl = cfg.llm?.[proto]?.baseUrl;
+  if (!baseUrl) throw new Error(`.config.json 里没有配置 llm.${proto}.baseUrl（${engine} 只认 ${proto} 协议地址），请编辑 ${CONFIG_PATH}`);
   if (!cfg.apiKey) throw new Error(`.config.json 里没有 apiKey，请运行 ai-kit 按提示填写（或编辑 ${CONFIG_PATH}）`);
   return { ep: { baseUrl, model: em.model, smallModel: em.smallModel }, apiKey: cfg.apiKey };
 }
@@ -194,6 +225,13 @@ function skillsSrc(cfg) {
   const d = cfg?.skillsDir?.trim();
   if (!d) return join(ROOT, "skills");
   return d.startsWith("~") ? join(HOME, d.slice(1)) : resolve(d);
+}
+
+// 记录上次真正推给引擎的 LLM 配置指纹：只有变了才需要动引擎侧的常驻状态
+// key 只存摘要，别在配置里再抄一份明文
+function llmFingerprint(ep, apiKey) {
+  const key = apiKey ? createHash("sha256").update(apiKey).digest("hex").slice(0, 12) : "";
+  return [ep.baseUrl, ep.model, ep.smallModel ?? "", key].join("|");
 }
 
 async function autoSync(cfg) {
@@ -263,7 +301,7 @@ async function promptMissing(cfg, engine) {
     if (v) cfg.apiKey = v;
   }
   const em = cfg.engines[engine];
-  const proto = em?.protocol ?? "anthropic";
+  const proto = ADAPTERS[engine].protocol;
   if (!cfg.llm[proto]?.baseUrl) {
     const v = await askLine(`${proto} 协议地址 (baseUrl): `);
     if (v) cfg.llm[proto] = { baseUrl: v };
@@ -353,11 +391,11 @@ async function start(engineArg) {
   }
   await autoUpdate(engine);
   const em0 = cfg.engines?.[engine];
-  if (!cfg.apiKey || !em0?.model || !cfg.llm?.[em0?.protocol ?? "anthropic"]?.baseUrl) {
+  if (!cfg.apiKey || !em0?.model || !cfg.llm?.[a.protocol]?.baseUrl) {
     cfg = await promptMissing(cfg, engine);
   }
-  let apiKey;
-  try { ({ apiKey } = resolveEndpoint(cfg, engine)); }
+  let apiKey, ep;
+  try { ({ apiKey, ep } = resolveEndpoint(cfg, engine)); }
   catch (e) { console.error(e.message); process.exit(1); }
   for (const e of ENGINES) {
     const ae = ADAPTERS[e];
@@ -365,7 +403,19 @@ async function start(engineArg) {
     try {
       const r = resolveEndpoint(cfg, e);
       await ae.applyConfig(e, r.ep, r.apiKey);
-    } catch { }
+    } catch {
+      // 该引擎自己的 model/baseUrl 没填全：保持它原有配置不动，但要说清楚，
+      // 否则改完 key 会以为已经生效
+      console.log(`  · ${e} 配置不全，跳过（沿用该引擎已有配置）`);
+    }
+  }
+  // 配置真的变了才动引擎侧常驻状态：codex 的 app-server daemon 会把旧 key/地址
+  // 留在自己进程里，不重启它，改了 token 重启 ai-kit 也还是打旧地址
+  const fp = llmFingerprint(ep, apiKey);
+  if ((cfg.applied?.[engine] ?? "") !== fp) {
+    if (a.restartDaemon?.()) console.log(`  ✓ 已重启 ${engine} 的常驻服务，旧 key/地址已失效`);
+    cfg.applied = { ...(cfg.applied ?? {}), [engine]: fp };
+    saveConfig(cfg);
   }
   await autoSync(cfg);
   const argv = process.argv.slice(2);
@@ -375,7 +425,12 @@ async function start(engineArg) {
     const answer = (await askLine(`权限模式 [回车=bypass 全自动 / 输入 n=默认审批]: `)).toLowerCase();
     if (answer === "n" || answer === "normal") mode = "normal";
   }
-  const extra = mode === "bypass" ? (a.bypassArgs ?? []) : [];
+  // 显式带上 config 里的模型：引擎启动时可能续接上次会话，会话里锁着旧模型
+  const extra = [
+    ...(mode === "bypass" ? (a.bypassArgs ?? []) : []),
+    ...(a.launchArgs?.(ep) ?? []),
+  ];
+  console.log(`LLM: ${ep.model} @ ${ep.baseUrl}\n`);
   const child = sh(a.cmd, [...extra, ...passthrough], { stdio: "inherit", env: { ...process.env, AI_KIT_API_KEY: apiKey } });
   process.exit(child.status ?? 0);
 }
@@ -393,7 +448,7 @@ async function status() {
     const ok = a.installed();
     let extra = "";
     if (cfg) {
-      try { const r = resolveEndpoint(cfg, e); extra = `  ${r.ep.model} (${cfg.engines[e].protocol})`; } catch { extra = "  ⚠ 配置不全"; }
+      try { const r = resolveEndpoint(cfg, e); extra = `  ${r.ep.model} (${a.protocol})`; } catch { extra = "  ⚠ 配置不全"; }
     }
     console.log(`${ok ? "●" : "○"} ${e.padEnd(12)} ${ok ? "已安装" : "未安装"}${extra}${cfg?.defaultEngine === e ? "  ← 默认" : ""}`);
   }
@@ -426,5 +481,5 @@ switch (cmd) {
     break;
   default:
     if (ENGINES.includes(cmd)) await start(cmd);
-    else console.log(`用法: ai-kit [start|claude-code|codex|zcode|change_engine|install|status]`);
+    else console.log(`用法: ai-kit [start|claude-code|codex|change_engine|install|status]`);
 }

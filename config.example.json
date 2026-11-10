@@ -11,16 +11,10 @@
   },
   "engines": {
     "claude-code": {
-      "protocol": "anthropic",
       "model": "",
       "smallModel": ""
     },
     "codex": {
-      "protocol": "openai",
-      "model": ""
-    },
-    "zcode": {
-      "protocol": "anthropic",
       "model": ""
     }
   }

@@ -1,6 +1,6 @@
 # ai-coding-kit
 
-一份 config + 一个 skills 仓库，通吃 Claude Code / Codex / ZCode。
+一份 config + 一个 skills 仓库，通吃 Claude Code / Codex。
 
 ## 用法
 
@@ -15,8 +15,10 @@ ai-kit                                  # 任何目录直接运行
 
 首次启动会问一次是否加全局 alias（`ai` / `ai-kit`）。
 
+改了 `.config.json` 里的 key / 地址 / 模型后，直接重跑 `ai-kit` 即可：启动时会重推配置，并在检测到变化时重启 codex 的常驻服务、用 `-m` 显式指定模型（续接旧会话也不会沿用旧模型）。
+
 ```bash
-ai-kit claude          # 临时启动指定引擎
+ai-kit claude-code     # 临时启动指定引擎
 ai-kit change_engine   # 切换默认引擎
 ai-kit                 # 启动时可选权限模式：回车=bypass 全自动（默认），n=默认审批
 ai-kit status          # 查看状态
@@ -24,39 +26,38 @@ ai-kit status          # 查看状态
 
 ## .config.json
 
-`.config.json（仓库根目录，点开头不会进 git）`（点开头，key 不会进 git）：
+`.config.json` —— **每次 `ai-kit` 启动都会把这里的 LLM 配置重新推给各引擎**，改完直接重启 `ai-kit` 就生效：
 
 ```json
 {
-  "defaultEngine": "claude",
+  "defaultEngine": "codex",
   "apiKey": "填你的key",
-  "anthropic": { "baseUrl": "填anthropic兼容地址" },
-  "openai": { "baseUrl": "填openai兼容地址" },
-  "claude": { "model": "主模型", "smallModel": "小模型" },
-  "codex": { "model": "模型" },
-  "zcode": { "model": "模型" }
+  "llm": {
+    "anthropic": { "baseUrl": "填anthropic兼容地址" },
+    "openai": { "baseUrl": "填openai兼容地址" }
+  },
+  "engines": {
+    "claude-code": { "model": "主模型", "smallModel": "小模型" },
+    "codex": { "model": "模型" }
+  }
 }
 ```
 
+`applied` 是 ai-kit 自己写的，不用管它。
+
 ### 怎么理解这份配置
 
-你在 token plan（比如 GLM Coding Plan）买的服务会给你**两个协议的接入地址**：
-
-- **anthropic 协议地址** —— 给说 Anthropic 协议的引擎用（`claude-code`，以及走 anthropic 协议配置的 `zcode`）
-- **openai 协议地址** —— 给说 OpenAI/GPT 协议的引擎用（`codex`）
-
-`engines` 里每个引擎用 `protocol` 字段声明自己说哪种协议，请求就发到 `llm` 里对应的地址。引擎换协议、换地址互不影响。
+token plan 会给**两个协议的接入地址**：`claude-code` 只会说 anthropic 协议，就用 `llm.anthropic.baseUrl`；`codex` 只会说 openai 协议，就用 `llm.openai.baseUrl`。协议是引擎自己带的，配置里不用填。
 
 - `apiKey` 公用
-- 只有 `claude-code` 有 `smallModel`（Claude Code 专属的 `ANTHROPIC_SMALL_FAST_MODEL`，跑后台小任务省钱）；其他引擎单模型
-- `zcode` 的模型/协议也可以直接在客户端内管理，这里的配置作为记录与兜底
+- 只有 `claude-code` 有 `smallModel`（`ANTHROPIC_SMALL_FAST_MODEL`，跑后台小任务省钱）
 - skill 放本仓库 `skills/` 文件夹，用 [Anthropic 标准](https://code.claude.com/docs/en/skills)格式（每个 skill 一个文件夹 + `SKILL.md`）：
 
 ```
 skills/hello-world/SKILL.md
 ```
 
-`SKILL.md` 带 frontmatter（`name` + `description`），`description` 写清什么时候触发。往里无限加，启动时自动软链到 `~/{.claude,.codex,.zcode}/skills/`。想用外部仓库就填 `skillsDir`。
+`SKILL.md` 带 frontmatter（`name` + `description`），`description` 写清什么时候触发。往里无限加，启动时自动软链到 `~/.claude/skills/` 和 `~/.codex/skills/`。想用外部仓库就填 `skillsDir`。
 
 ## 写入位置
 
@@ -64,7 +65,6 @@ skills/hello-world/SKILL.md
 |---|---|
 | Claude Code | `~/.claude/settings.json` |
 | Codex | `~/.codex/config.toml`（托管块）+ key 写 `~/.zshenv` |
-| ZCode | `~/.zcode/settings.json` |
 
 ## 依赖
 
