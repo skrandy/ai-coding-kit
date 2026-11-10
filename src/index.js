@@ -65,11 +65,34 @@ const codex = {
     const p = join(HOME, ".codex", "config.toml");
     mkdirSync(dirname(p), { recursive: true });
     const existing = existsSync(p) ? readFileSync(p, "utf8") : "";
-    const stripped = existing.replace(new RegExp(`${BEGIN}[\\s\\S]*?${END}\\n?`, "g"), "");
+    // codex(toml_edit) 追加自己的表（[tui]/[projects]/[windows]…）时会挤进托管块尾部，
+    // 整块剥离会连带删掉项目信任记录等状态；把非 ai-kit 的表摘出来放到托管块之后。
+    // 布局固定为：块前的顶层键 + 托管块 + 块前的表 + 挤进块的表 + 块后内容，
+    // 保证重复运行结果稳定（块内的顶层键必须落在任何 [table] 之前，否则会被解析进那张表）
+    const bi = existing.indexOf(BEGIN);
+    const ei = bi >= 0 ? existing.indexOf(END, bi) : -1;
+    const before = bi >= 0 ? existing.slice(0, bi) : existing;
+    const inner = bi >= 0 ? existing.slice(bi + BEGIN.length, ei) : "";
+    const after = bi >= 0 ? existing.slice(ei + END.length) : "";
+    const foreign = inner
+      .split(/(?=\n?\[)/)
+      .filter(s => /^\s*\[(?!model_providers\.ai-kit\])/.test(s))
+      .join("")
+      .trim();
+    // Windows 下 codex 0.16x+ 的 managed sandbox（自写的 [windows] 段）会压掉
+    // --dangerously-bypass-approvals-and-sandbox 旗标，须显式落配置才真正 bypass；
+    // 块前（首个表头之前）已有同名键则跳过，避免 TOML 重复键
+    const ft = before.search(/^\[/m);
+    const head = ft >= 0 ? before.slice(0, ft) : before;
+    const bypassKeys = WIN
+      ? [`approval_policy = "never"`, `sandbox_mode = "danger-full-access"`]
+        .filter(k => !new RegExp(`^${k.split(" ")[0]}\\s*=`, "m").test(head))
+      : [];
     const block = [
       BEGIN,
       `model = "${ep.model}"`,
       `model_provider = "ai-kit"`,
+      ...bypassKeys,
       ``,
       `[model_providers.ai-kit]`,
       `name = "ai-kit"`,
@@ -78,7 +101,14 @@ const codex = {
       END,
       "",
     ].join("\n");
-    writeFileSync(p, stripped + block);
+    const afterBody = after.replace(/^\n+/, "");
+    const beforeTables = ft >= 0 ? before.slice(ft).trim() : "";
+    writeFileSync(p,
+      (head && !head.endsWith("\n") ? head + "\n" : head)
+      + block
+      + (beforeTables ? `\n${beforeTables}\n` : "")
+      + (foreign ? `\n${foreign}\n` : "")
+      + (afterBody ? `\n${afterBody}` : ""));
 
     const zshenv = join(HOME, ".zshenv");
     const cur = existsSync(zshenv) ? readFileSync(zshenv, "utf8") : "";
