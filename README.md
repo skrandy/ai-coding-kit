@@ -67,7 +67,5 @@ skills/hello-world/SKILL.md
 ## 依赖
 
 - node >= 23 + npm
-- git（skills 仓库自动 pull）
-- Windows / macOS / Linux；Windows 下 skills 用 junction 链接，无需管理员权限
 
 MIT
