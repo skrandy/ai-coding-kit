@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-/** ai-kit — 一份 config + 一个 skills 仓库，通吃 claude-code / codex。用法: ai-kit | change_engine | install [e] | status */
 
 import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync, symlinkSync, statSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
@@ -33,7 +32,6 @@ const claude = {
   cmd: "claude",
   protocol: "anthropic",
   bypassArgs: ["--dangerously-skip-permissions"],
-  // 显式带模型：续接历史会话时也以 config 为准，不吃旧会话里锁死的模型
   launchArgs: (ep) => ["--model", ep.model],
   pkg: "@anthropic-ai/claude-code",
   installed: () => existsSync(join(HOME, ".claude")) || which("claude"),
@@ -61,16 +59,37 @@ const codex = {
   cmd: "codex",
   protocol: "openai",
   bypassArgs: ["--dangerously-bypass-approvals-and-sandbox"],
-  // -m 覆盖续接会话里锁死的模型；model_provider 保证走的还是 ai-kit 这套地址
   launchArgs: (ep) => ["-m", ep.model, "-c", 'model_provider="ai-kit"'],
-  // codex 有常驻 app-server daemon，key/地址是它自己进程的环境与配置，
-  // 换了 token 后不重启它，请求仍会带着旧 key 打旧地址
   restartDaemon() {
     const r = sh("codex", ["app-server", "daemon", "restart"], { stdio: "ignore", timeout: 20000 });
     return r.status === 0;
   },
   pkg: "@openai/codex",
   installed: () => existsSync(join(HOME, ".codex")) || which("codex"),
+  nativeBin() {
+    if (!WIN) return "";
+    for (const root of [dirname(process.execPath), join(HOME, "AppData", "Roaming", "npm")]) {
+      const vendor = join(root, "node_modules", "@openai", "codex", "node_modules");
+      let level1 = [];
+      try { level1 = readdirSync(vendor); } catch { continue; }
+      for (const a of level1) {
+        for (const dir of [join(vendor, a), join(vendor, a, "@openai")]) {
+          let level2 = [];
+          try { level2 = readdirSync(dir); } catch { continue; }
+          for (const b of level2) {
+            const vend = b === "vendor" ? join(dir, b) : join(dir, b, "vendor");
+            let archs = [];
+            try { archs = readdirSync(vend); } catch { continue; }
+            for (const arch of archs) {
+              const exe = join(vend, arch, "bin", "codex.exe");
+              if (existsSync(exe)) return exe;
+            }
+          }
+        }
+      }
+    }
+    return "";
+  },
   async install() {
     await run("npm", ["install", "-g", "@openai/codex"]);
   },
@@ -78,10 +97,6 @@ const codex = {
     const p = join(HOME, ".codex", "config.toml");
     mkdirSync(dirname(p), { recursive: true });
     const existing = existsSync(p) ? readFileSync(p, "utf8") : "";
-    // codex(toml_edit) 追加自己的表（[tui]/[projects]/[windows]…）时会挤进托管块尾部，
-    // 整块剥离会连带删掉项目信任记录等状态；把非 ai-kit 的表摘出来放到托管块之后。
-    // 布局固定为：块前的顶层键 + 托管块 + 块前的表 + 挤进块的表 + 块后内容，
-    // 保证重复运行结果稳定（块内的顶层键必须落在任何 [table] 之前，否则会被解析进那张表）
     const bi = existing.indexOf(BEGIN);
     const ei = bi >= 0 ? existing.indexOf(END, bi) : -1;
     const before = bi >= 0 ? existing.slice(0, bi) : existing;
@@ -92,9 +107,6 @@ const codex = {
       .filter(s => /^\s*\[(?!model_providers\.ai-kit\])/.test(s))
       .join("")
       .trim();
-    // Windows 下 codex 0.16x+ 的 managed sandbox（自写的 [windows] 段）会压掉
-    // --dangerously-bypass-approvals-and-sandbox 旗标，须显式落配置才真正 bypass；
-    // 块前（首个表头之前）已有同名键则跳过，避免 TOML 重复键
     const ft = before.search(/^\[/m);
     const head = ft >= 0 ? before.slice(0, ft) : before;
     const bypassKeys = WIN
@@ -138,8 +150,8 @@ const WIN = process.platform === "win32";
 
 const q = (s) => (/[\s"]/.test(s) ? `"${s.replace(/"/g, '\\"')}"` : s);
 
-// WIN 下 npm/claude 多为 .cmd shim 须经 shell；args 数组走 shell 会被裸拼接（DEP0190），改为整条引号串
 function sh(cmd, args, opts = {}) {
+  if (WIN && /\.exe$/i.test(cmd)) return spawnSync(cmd, args, opts);
   return WIN
     ? spawnSync([cmd, ...args].map(q).join(" "), { ...opts, shell: true })
     : spawnSync(cmd, args, opts);
@@ -154,14 +166,10 @@ function run(cmd, args) {
 
 function which(cmd) {
   if (!WIN) return spawnSync("which", [cmd], { stdio: "ignore" }).status === 0;
-  // 裸 "where" 依赖 PATH 里有 System32，绝对路径更稳
   const w = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "where.exe");
   return spawnSync(w, [cmd], { encoding: "utf8" }).status === 0;
 }
 
-// 老配置长这样：llm 地址写在根上（"anthropic"/"openai"），引擎配置也写在根上
-// （"claude"/"codex"），engines 里还带 protocol，外加已经不再支持的 zcode。
-// 读的时候就地转成现在的结构，省得升级后一堆没人读的键还留着。
 const LEGACY_NAME = { "claude-code": "claude" };
 
 function engineSection(src, engine) {
@@ -227,8 +235,6 @@ function skillsSrc(cfg) {
   return d.startsWith("~") ? join(HOME, d.slice(1)) : resolve(d);
 }
 
-// 记录上次真正推给引擎的 LLM 配置指纹：只有变了才需要动引擎侧的常驻状态
-// key 只存摘要，别在配置里再抄一份明文
 function llmFingerprint(ep, apiKey) {
   const key = apiKey ? createHash("sha256").update(apiKey).digest("hex").slice(0, 12) : "";
   return [ep.baseUrl, ep.model, ep.smallModel ?? "", key].join("|");
@@ -263,7 +269,6 @@ async function autoSync(cfg) {
 }
 
 async function askLine(prompt) {
-  // 逐行读取：Response(stdin).text() 要等流关闭(EOF)，交互终端下永不返回（卡死）
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   try {
     return (await rl.question(prompt)).trim();
@@ -404,13 +409,9 @@ async function start(engineArg) {
       const r = resolveEndpoint(cfg, e);
       await ae.applyConfig(e, r.ep, r.apiKey);
     } catch {
-      // 该引擎自己的 model/baseUrl 没填全：保持它原有配置不动，但要说清楚，
-      // 否则改完 key 会以为已经生效
       console.log(`  · ${e} 配置不全，跳过（沿用该引擎已有配置）`);
     }
   }
-  // 配置真的变了才动引擎侧常驻状态：codex 的 app-server daemon 会把旧 key/地址
-  // 留在自己进程里，不重启它，改了 token 重启 ai-kit 也还是打旧地址
   const fp = llmFingerprint(ep, apiKey);
   if ((cfg.applied?.[engine] ?? "") !== fp) {
     if (a.restartDaemon?.()) console.log(`  ✓ 已重启 ${engine} 的常驻服务，旧 key/地址已失效`);
@@ -420,18 +421,20 @@ async function start(engineArg) {
   await autoSync(cfg);
   const argv = process.argv.slice(2);
   const passthrough = argv.slice(1).filter(x => !ENGINES.includes(x));
-  let mode = "bypass";
-  if (process.stdin.isTTY) {
+  let mode = cfg.permissionMode ?? "bypass";
+  if (process.stdin.isTTY && (cfg.permissionMode === undefined || cfg.permissionMode === null)) {
     const answer = (await askLine(`权限模式 [回车=bypass 全自动 / 输入 n=默认审批]: `)).toLowerCase();
     if (answer === "n" || answer === "normal") mode = "normal";
+    cfg.permissionMode = mode;
+    saveConfig(cfg);
   }
-  // 显式带上 config 里的模型：引擎启动时可能续接上次会话，会话里锁着旧模型
   const extra = [
     ...(mode === "bypass" ? (a.bypassArgs ?? []) : []),
     ...(a.launchArgs?.(ep) ?? []),
   ];
   console.log(`LLM: ${ep.model} @ ${ep.baseUrl}\n`);
-  const child = sh(a.cmd, [...extra, ...passthrough], { stdio: "inherit", env: { ...process.env, AI_KIT_API_KEY: apiKey } });
+  const bin = a.nativeBin?.() || a.cmd;
+  const child = sh(bin, [...extra, ...passthrough], { stdio: "inherit", env: { ...process.env, AI_KIT_API_KEY: apiKey } });
   process.exit(child.status ?? 0);
 }
 

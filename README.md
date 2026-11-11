@@ -20,7 +20,7 @@ ai-kit                                  # 任何目录直接运行
 ```bash
 ai-kit claude-code     # 临时启动指定引擎
 ai-kit change_engine   # 切换默认引擎
-ai-kit                 # 启动时可选权限模式：回车=bypass 全自动（默认），n=默认审批
+ai-kit                 # 首次启动选一次权限模式并记住：回车=bypass 全自动（默认），n=默认审批
 ai-kit status          # 查看状态
 ```
 
@@ -43,7 +43,7 @@ ai-kit status          # 查看状态
 }
 ```
 
-`applied` 是 ai-kit 自己写的，不用管它。
+`applied` 是 ai-kit 自己写的，不用管它。`permissionMode` 记住首次选的权限模式（`bypass` / `normal`），删掉它或设为 `null` 会重新询问。
 
 ### 怎么理解这份配置
 
