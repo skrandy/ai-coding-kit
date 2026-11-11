@@ -43,8 +43,6 @@ ai-kit status          # 查看状态
 }
 ```
 
-`applied` 是 ai-kit 自己写的，不用管它。`permissionMode` 记住首次选的权限模式（`bypass` / `normal`），删掉它或设为 `null` 会重新询问。
-
 ### 怎么理解这份配置
 
 token plan 会给**两个协议的接入地址**：`claude-code` 只会说 anthropic 协议，就用 `llm.anthropic.baseUrl`；`codex` 只会说 openai 协议，就用 `llm.openai.baseUrl`。协议是引擎自己带的，配置里不用填。
