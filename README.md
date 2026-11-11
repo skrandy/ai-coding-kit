@@ -10,18 +10,15 @@ ai-kit                                  # 任何目录直接运行
 
 # 首次运行：选引擎（没装自动下载）→ 设默认 → 问一次全局 alias
 # 之后运行：首次启动某引擎时引导补全它的 apiKey/baseUrl/模型名，答完永久保存
-# 之后运行：自动查更新 + 自动 pull/链 skills + 启动默认引擎
+# 之后运行：自动查更新 + 自动 pull 每个 skill 的 git 仓库 + 链 skills + 启动默认引擎
 ```
-
-首次启动会问一次是否加全局 alias（`ai` / `ai-kit`）。
-
-改了 `.config.json` 里的 key / 地址 / 模型后，直接重跑 `ai-kit` 即可：启动时会重推配置，并在检测到变化时重启 codex 的常驻服务、用 `-m` 显式指定模型（续接旧会话也不会沿用旧模型）。
 
 ```bash
 ai-kit claude-code     # 临时启动指定引擎
 ai-kit change_engine   # 切换默认引擎
 ai-kit                 # 首次启动选一次权限模式并记住：回车=bypass 全自动（默认），n=默认审批
-ai-kit status          # 查看状态
+ai-kit status          # 查看状态（含每个 skill 的 git 分支/脏文件）
+ai-kit sync            # 手动拉一遍 skills 的 git 仓库并重链（不启动引擎）
 ```
 
 ## .config.json
@@ -42,27 +39,6 @@ ai-kit status          # 查看状态
   }
 }
 ```
-
-### 怎么理解这份配置
-
-token plan 会给**两个协议的接入地址**：`claude-code` 只会说 anthropic 协议，就用 `llm.anthropic.baseUrl`；`codex` 只会说 openai 协议，就用 `llm.openai.baseUrl`。协议是引擎自己带的，配置里不用填。
-
-- `apiKey` 公用
-- 只有 `claude-code` 有 `smallModel`（`ANTHROPIC_SMALL_FAST_MODEL`，跑后台小任务省钱）
-- skill 放本仓库 `skills/` 文件夹，用 [Anthropic 标准](https://code.claude.com/docs/en/skills)格式（每个 skill 一个文件夹 + `SKILL.md`）：
-
-```
-skills/hello-world/SKILL.md
-```
-
-`SKILL.md` 带 frontmatter（`name` + `description`），`description` 写清什么时候触发。往里无限加，启动时自动软链到 `~/.claude/skills/` 和 `~/.codex/skills/`。想用外部仓库就填 `skillsDir`。
-
-## 写入位置
-
-| 引擎 | LLM 配置 |
-|---|---|
-| Claude Code | `~/.claude/settings.json` |
-| Codex | `~/.codex/config.toml`（托管块）+ key 写 `~/.zshenv` |
 
 ## 依赖
 

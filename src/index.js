@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 
-import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync, symlinkSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync, symlinkSync, statSync, lstatSync, readlinkSync, rmdirSync, unlinkSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { homedir } from "node:os";
-import { spawnSync } from "node:child_process";
+import { spawnSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import * as readline from "node:readline/promises";
@@ -240,31 +240,122 @@ function llmFingerprint(ep, apiKey) {
   return [ep.baseUrl, ep.model, ep.smallModel ?? "", key].join("|");
 }
 
+const isRepo = (d) => existsSync(join(d, ".git"));
+
+function gitAsync(args, { cwd, timeout = 20000 } = {}) {
+  return new Promise((done) => {
+    let out = "", err = "", settled = false;
+    const child = spawn("git", args, {
+      cwd,
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+    });
+    const finish = (status) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      done({ status, stdout: out, stderr: err });
+    };
+    const timer = setTimeout(() => { try { child.kill(); } catch { } finish(124); }, timeout);
+    child.stdout.on("data", (d) => { out += d; });
+    child.stderr.on("data", (d) => { err += d; });
+    child.on("error", () => finish(127));
+    child.on("close", (code) => finish(code ?? 1));
+  });
+}
+
+function gitError(r) {
+  const e = r.stderr.trim();
+  if (r.status === 124) return "超时，跳过";
+  if (/would be overwritten|local changes|unstaged|uncommitted/i.test(e)) return "本地有未提交改动，跳过";
+  if (/would clobber|untracked working tree/i.test(e)) return "有未跟踪文件冲突，跳过";
+  if (/not possible to fast-forward|diverged|unrelated histories|refusing to merge/i.test(e)) return "与远端分叉，跳过";
+  if (/authentication|could not read Username|permission denied|terminal prompts disabled|could not resolve host|unable to access/i.test(e)) return "无网络或无权限，跳过";
+  return e.split("\n").filter(Boolean).pop() ?? "拉取失败";
+}
+
+async function pullRepo(dir, timeout) {
+  const remote = (await gitAsync(["remote"], { cwd: dir, timeout: 5000 })).stdout.trim();
+  if (!remote) return { state: "no-remote" };
+  const branch = (await gitAsync(["rev-parse", "--abbrev-ref", "HEAD"], { cwd: dir, timeout: 5000 })).stdout.trim();
+  if (!branch || branch === "HEAD") return { state: "detached" };
+  const up = (await gitAsync(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], { cwd: dir, timeout: 5000 })).stdout.trim();
+  if (!up) return { state: "skip", msg: "未设置上游分支，跳过" };
+  const before = (await gitAsync(["rev-parse", "HEAD"], { cwd: dir, timeout: 5000 })).stdout.trim();
+  const f = await gitAsync(["fetch", "--quiet"], { cwd: dir, timeout });
+  if (f.status !== 0) return { state: "skip", msg: gitError(f) };
+  const m = await gitAsync(["merge", "--ff-only", "--quiet", up], { cwd: dir, timeout });
+  if (m.status !== 0) return { state: "skip", msg: gitError(m) };
+  const after = (await gitAsync(["rev-parse", "HEAD"], { cwd: dir, timeout: 5000 })).stdout.trim();
+  if (!after || after === before) return { state: "same", branch };
+  const n = Number((await gitAsync(["rev-list", "--count", `${before}..${after}`], { cwd: dir, timeout: 5000 })).stdout.trim()) || 0;
+  return { state: "updated", branch, commits: n, from: before.slice(0, 7), to: after.slice(0, 7) };
+}
+
+function skillDirs(src) {
+  const out = [];
+  let entries = [];
+  try { entries = readdirSync(src); } catch { return out; }
+  for (const name of entries) {
+    const p = join(src, name);
+    try { if (statSync(p).isDirectory()) out.push({ name, path: p }); } catch { }
+  }
+  return out;
+}
+
+async function pullSkills(cfg, src) {
+  const timeout = Number(cfg.skillsPullTimeout) > 0 ? Number(cfg.skillsPullTimeout) : 20000;
+  const tasks = [];
+  if (isRepo(src)) tasks.push({ label: "skills", dir: src });
+  for (const d of skillDirs(src)) {
+    if (isRepo(d.path)) tasks.push({ label: `skills/${d.name}`, dir: d.path });
+  }
+  if (!tasks.length) return;
+  const results = await Promise.all(tasks.map(t => pullRepo(t.dir, timeout)));
+  results.forEach((r, i) => {
+    const t = tasks[i];
+    if (r.state === "updated") {
+      console.log(`  ⬆ ${t.label}: +${r.commits} 个提交（${r.from} → ${r.to}）`);
+    } else if (r.state === "skip") {
+      console.log(`  · ${t.label}: ${r.msg}`);
+    }
+  });
+}
+
+function linkSkill(name, skillPath) {
+  const target = resolve(skillPath);
+  for (const e of ENGINES) {
+    const a = ADAPTERS[e];
+    if (!a.installed()) continue;
+    const dir = a.skillsDir();
+    mkdirSync(dir, { recursive: true });
+    const dest = join(dir, name);
+    let stat = null;
+    try { stat = lstatSync(dest); } catch { }
+    let relink = false;
+    if (stat) {
+      let cur = "";
+      try { cur = readlinkSync(dest); } catch { }
+      if (cur && resolve(dir, cur.replace(/^\\\\\?\\/, "")) === target) continue;
+      if (!stat.isSymbolicLink()) continue;
+      try { WIN ? rmdirSync(dest) : unlinkSync(dest); } catch { continue; }
+      relink = true;
+    }
+    try {
+      symlinkSync(target, dest, WIN ? "junction" : "dir");
+      console.log(`  ${relink ? "↻" : "✓"} skills: ${name} → ${dest}`);
+    } catch { }
+  }
+}
+
 async function autoSync(cfg) {
   const src = skillsSrc(cfg);
   if (!src || !existsSync(src)) return;
-  if (existsSync(join(src, ".git"))) {
-    try {
-      const r = sh("git", ["-C", src, "pull", "--ff-only"], { encoding: "utf8", timeout: 30000 });
-      if (r.status === 0 && r.stdout?.trim().match(/files? changed|Fast-forward/)) {
-        console.log(`  ✓ skills 仓库已更新: ${r.stdout.trim().split("\n")[0]}`);
-      }
-    } catch { }
-  }
-  for (const name of readdirSync(src)) {
-    const skillPath = join(src, name);
-    if (statSync(skillPath).isFile()) continue;
-    if (!existsSync(join(skillPath, "SKILL.md"))) continue;
-    for (const e of ENGINES) {
-      const a = ADAPTERS[e];
-      if (!a.installed()) continue;
-      const dir = a.skillsDir();
-      mkdirSync(dir, { recursive: true });
-      const dest = join(dir, name);
-      if (existsSync(dest)) continue;
-      symlinkSync(resolve(skillPath), dest, WIN ? "junction" : "dir");
-      console.log(`  ✓ skills: ${name} → ${dest}`);
-    }
+  if (cfg.skillsPull !== false) await pullSkills(cfg, src);
+  for (const { name, path } of skillDirs(src)) {
+    if (!existsSync(join(path, "SKILL.md"))) continue;
+    linkSkill(name, path);
   }
 }
 
@@ -457,7 +548,27 @@ async function status() {
   }
   console.log(`\nconfig: ${CONFIG_PATH}`);
   const src = skillsSrc(cfg ?? {});
-  console.log(`skills: ${src}${existsSync(src) ? ` (${readdirSync(src).filter(n => existsSync(join(src, n, "SKILL.md"))).length} 个)` : " (不存在)"}`);
+  const dirs = existsSync(src) ? skillDirs(src) : [];
+  const n = dirs.filter(d => existsSync(join(d.path, "SKILL.md"))).length;
+  console.log(`skills: ${src}${existsSync(src) ? ` (${n} 个)` : " (不存在)"}`);
+  const pull = (cfg ?? {}).skillsPull !== false;
+  console.log(`自动拉取: ${pull ? "开" : "关"}${pull ? "" : "（skillsPull: false）"}`);
+  for (const d of dirs) {
+    if (!existsSync(join(d.path, "SKILL.md")) && !isRepo(d.path)) continue;
+    if (!isRepo(d.path)) {
+      console.log(`  ○ ${d.name}  本地目录`);
+      continue;
+    }
+    const branch = (sh("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: d.path, encoding: "utf8", timeout: 5000 }).stdout ?? "").trim();
+    const dirty = (sh("git", ["status", "--porcelain"], { cwd: d.path, encoding: "utf8", timeout: 5000 }).stdout ?? "").trim();
+    const remote = (sh("git", ["remote", "get-url", "origin"], { cwd: d.path, encoding: "utf8", timeout: 5000 }).stdout ?? "").trim();
+    const marks = [
+      branch && branch !== "HEAD" ? branch : "detached",
+      dirty ? `未提交 ${dirty.split("\n").length}` : "",
+      remote ? "git" : "无 origin",
+    ].filter(Boolean).join("  ");
+    console.log(`  ● ${d.name}  ${marks}`);
+  }
 }
 
 const [cmd, ...rest] = process.argv.slice(2);
