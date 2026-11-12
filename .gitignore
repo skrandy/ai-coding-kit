@@ -1,7 +1,7 @@
+.*/
 node_modules/
 .DS_Store
 .config.json
 
 skills/*
 !skills/.gitkeep
-.vscode
