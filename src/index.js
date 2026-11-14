@@ -41,12 +41,18 @@ const claude = {
   async applyConfig(_engine, ep, apiKey) {
     const p = join(HOME, ".claude", "settings.json");
     const settings = readJson(p) ?? {};
+    const env = { ...(settings.env ?? {}) };
+    // 旧的 SMALL_FAST_MODEL 已废弃，统一走 DEFAULT_*_MODEL；清掉以免残值冲突
+    for (const k of ["ANTHROPIC_SMALL_FAST_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+      "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL"]) delete env[k];
     settings.env = {
-      ...(settings.env ?? {}),
+      ...env,
       ANTHROPIC_BASE_URL: ep.baseUrl,
       ANTHROPIC_AUTH_TOKEN: apiKey,
       ANTHROPIC_MODEL: ep.model,
-      ...(ep.smallModel ? { ANTHROPIC_SMALL_FAST_MODEL: ep.smallModel } : {}),
+      ...(ep.opusModel ? { ANTHROPIC_DEFAULT_OPUS_MODEL: ep.opusModel } : {}),
+      ...(ep.sonnetModel ? { ANTHROPIC_DEFAULT_SONNET_MODEL: ep.sonnetModel } : {}),
+      ...(ep.haikuModel ? { ANTHROPIC_DEFAULT_HAIKU_MODEL: ep.haikuModel } : {}),
     };
     writeJson(p, settings);
     console.log(`  ✓ claude → ${p}  (${ep.model} @ ${ep.baseUrl})`);
@@ -171,28 +177,92 @@ function which(cmd) {
 }
 
 const LEGACY_NAME = { "claude-code": "claude" };
+const PROTOS = ["anthropic", "openai"];
 
 function engineSection(src, engine) {
-  const raw = src.engines?.[engine] ?? src[LEGACY_NAME[engine] ?? engine] ?? {};
-  const out = { model: raw.model ?? "" };
-  if (engine === "claude-code") out.smallModel = raw.smallModel ?? "";
+  const raw = src?.engines?.[engine] ?? src?.[LEGACY_NAME[engine] ?? engine] ?? {};
+  if (engine === "claude-code") {
+    // 主模型 = opus 档，不再单独存 model；老字段 model / smallModel 各自折算
+    return {
+      opusModel: raw.opusModel ?? raw.model ?? "",
+      sonnetModel: raw.sonnetModel ?? "",
+      haikuModel: raw.haikuModel ?? raw.smallModel ?? "",
+    };
+  }
+  return { model: raw.model ?? "" };
+}
+
+// 各引擎“本次实际请求的模型名”：claude-code 取 opus 档，codex 取 model
+const mainModelOf = (p, engine) =>
+  engine === "claude-code" ? (p?.engines?.["claude-code"]?.opusModel ?? "") : (p?.engines?.[engine]?.model ?? "");
+
+function normalizeProfile(src) {
+  const s = src ?? {};
+  const llm = {};
+  for (const proto of PROTOS) llm[proto] = { baseUrl: s.llm?.[proto]?.baseUrl ?? s[proto]?.baseUrl ?? "" };
+  const out = {
+    apiKey: s.apiKey ?? "",
+    llm,
+    engines: Object.fromEntries(ENGINES.map(e => [e, engineSection(s, e)])),
+  };
+  const desc = typeof s.desc === "string" ? s.desc.trim() : "";
+  if (desc) out.desc = desc;
   return out;
+}
+
+const isBlankProfile = (p) => !p?.apiKey
+  && !p?.llm?.anthropic?.baseUrl && !p?.llm?.openai?.baseUrl
+  && ENGINES.every(e => !mainModelOf(p, e));
+
+const NAME_SKIP = new Set(["api", "www", "openai", "anthropic", "v1", "com", "cn", "net", "org", "io", "ai", "co", "dev", "app"]);
+
+function guessProfileName(src) {
+  const urls = [src?.llm?.openai?.baseUrl, src?.llm?.anthropic?.baseUrl, src?.openai?.baseUrl, src?.anthropic?.baseUrl];
+  for (const u of urls) {
+    if (!u) continue;
+    try {
+      const parts = new URL(u).hostname.replace(/^www\./, "").split(".");
+      const hit = parts.find(p => p.length > 1 && !NAME_SKIP.has(p) && !/^\d+$/.test(p));
+      if (hit) return hit;
+    } catch { }
+  }
+  return "";
+}
+
+function uniqueName(profiles, base) {
+  const clean = String(base || "key").replace(/[^\w.一-龥-]+/g, "-").replace(/^-+|-+$/g, "") || "key";
+  if (!profiles[clean]) return clean;
+  let i = 2;
+  while (profiles[`${clean}-${i}`]) i++;
+  return `${clean}-${i}`;
 }
 
 function normalizeConfig(prev) {
   const rest = { ...prev };
-  for (const k of ["defaultEngine", "apiKey", "llm", "engines", "applied",
-    "anthropic", "openai", "claude", "codex", "zcode"]) delete rest[k];
-  const llm = {};
-  for (const proto of ["anthropic", "openai"]) {
-    llm[proto] = { baseUrl: prev.llm?.[proto]?.baseUrl ?? prev[proto]?.baseUrl ?? "" };
+  for (const k of ["defaultEngine", "defaultProfile", "profiles", "apiKey", "llm", "engines",
+    "applied", "anthropic", "openai", "claude", "codex", "zcode"]) delete rest[k];
+
+  const profiles = {};
+  const raw = prev.profiles;
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    for (const [k, v] of Object.entries(raw)) {
+      const name = String(k).trim();
+      if (name) profiles[name] = normalizeProfile(v);
+    }
   }
+  // 老版本扁平配置 → 自动折成一套命名配置
+  if (!Object.keys(profiles).length) {
+    profiles[uniqueName(profiles, guessProfileName(prev) || "default")] = normalizeProfile(prev);
+  }
+
   const defaultEngine = prev.defaultEngine === "claude" ? "claude-code" : prev.defaultEngine;
+  let defaultProfile = typeof prev.defaultProfile === "string" ? prev.defaultProfile.trim() : "";
+  if (!profiles[defaultProfile]) defaultProfile = Object.keys(profiles)[0];
+
   return {
     defaultEngine: ENGINES.includes(defaultEngine) ? defaultEngine : ENGINES[0],
-    apiKey: prev.apiKey ?? "",
-    llm,
-    engines: Object.fromEntries(ENGINES.map(e => [e, engineSection(prev, e)])),
+    defaultProfile,
+    profiles,
     ...(prev.applied
       ? { applied: Object.fromEntries(Object.entries(prev.applied).filter(([e]) => ENGINES.includes(e))) }
       : {}),
@@ -219,14 +289,38 @@ function saveConfig(cfg) {
   writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2) + "\n");
 }
 
-function resolveEndpoint(cfg, engine) {
-  const em = cfg.engines?.[engine];
-  if (!em?.model) throw new Error(`.config.json 里没有配置 ${engine} 的 model，请编辑 ${CONFIG_PATH}`);
+function profileEntry(cfg, name) {
+  const key = name ?? cfg.defaultProfile;
+  const p = cfg.profiles?.[key];
+  if (!p) {
+    const avail = Object.keys(cfg.profiles ?? {});
+    throw new Error(`找不到配置 "${key}"${avail.length ? `（可用：${avail.join(" / ")}）` : ""}，运行 ai-kit switch 管理`);
+  }
+  return { name: key, p };
+}
+
+function missingFor(p, engine) {
+  const out = [];
+  if (!p?.apiKey) out.push("apiKey");
   const proto = ADAPTERS[engine].protocol;
-  const baseUrl = cfg.llm?.[proto]?.baseUrl;
-  if (!baseUrl) throw new Error(`.config.json 里没有配置 llm.${proto}.baseUrl（${engine} 只认 ${proto} 协议地址），请编辑 ${CONFIG_PATH}`);
-  if (!cfg.apiKey) throw new Error(`.config.json 里没有 apiKey，请运行 ai-kit 按提示填写（或编辑 ${CONFIG_PATH}）`);
-  return { ep: { baseUrl, model: em.model, smallModel: em.smallModel }, apiKey: cfg.apiKey };
+  if (!p?.llm?.[proto]?.baseUrl) out.push(`llm.${proto}.baseUrl`);
+  if (!mainModelOf(p, engine)) out.push(engine === "claude-code" ? "claude-code 的 opus 档（主模型）" : `${engine} 的 model`);
+  return out;
+}
+
+function resolveEndpoint(cfg, engine, name) {
+  const { name: n, p } = profileEntry(cfg, name);
+  const miss = missingFor(p, engine);
+  if (miss.length) throw new Error(`配置 "${n}" 缺 ${miss.join(" / ")}，运行 ai-kit switch 补全（或编辑 ${CONFIG_PATH}）`);
+  const em = p.engines[engine];
+  const proto = ADAPTERS[engine].protocol;
+  const ep = { baseUrl: p.llm[proto].baseUrl, model: mainModelOf(p, engine) };
+  if (engine === "claude-code") {
+    ep.opusModel = em.opusModel ?? "";
+    ep.sonnetModel = em.sonnetModel ?? "";
+    ep.haikuModel = em.haikuModel ?? "";
+  }
+  return { ep, apiKey: p.apiKey, profile: n };
 }
 
 function skillsSrc(cfg) {
@@ -237,7 +331,7 @@ function skillsSrc(cfg) {
 
 function llmFingerprint(ep, apiKey) {
   const key = apiKey ? createHash("sha256").update(apiKey).digest("hex").slice(0, 12) : "";
-  return [ep.baseUrl, ep.model, ep.smallModel ?? "", key].join("|");
+  return [ep.baseUrl, ep.model, ep.haikuModel ?? "", ep.sonnetModel ?? "", ep.opusModel ?? "", key].join("|");
 }
 
 const isRepo = (d) => existsSync(join(d, ".git"));
@@ -389,36 +483,175 @@ async function setDefault(cfg, engine) {
   return cfg;
 }
 
-async function promptMissing(cfg, engine) {
-  if (!process.stdin.isTTY) return cfg;
-  console.log(`首次启动 ${engine} / 配置不完整，补全一下（回车跳过表示稍后自己改配置文件）：\n`);
-  if (!cfg.apiKey) {
-    const v = await askLine("API Key: ");
-    if (v) cfg.apiKey = v;
+const maskKey = (k) => (!k ? "无 key" : k.length <= 8 ? "****" : `…${k.slice(-4)}`);
+const shortUrl = (u) => (u || "").replace(/^https?:\/\//, "").replace(/\/+$/, "").replace(/\/.*$/, "");
+const wlen = (s) => [...s].reduce((n, ch) => n + (/[\u1100-\u115F\u2E80-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE6F\uFF00-\uFF60\uFFE0-\uFFE6]/.test(ch) ? 2 : 1), 0);
+const padW = (s, n) => s + " ".repeat(Math.max(0, n - wlen(s)));
+
+function listProfiles(cfg, { numbers = true } = {}) {
+  const names = Object.keys(cfg.profiles);
+  console.log(`API Key 配置（${names.length} 套，用这套：${cfg.defaultProfile}）`);
+  names.forEach((n, i) => {
+    const p = cfg.profiles[n];
+    const models = ENGINES.map(e => `${e === "claude-code" ? "claude" : e}:${mainModelOf(p, e) || "未配置"}`).join("  ");
+    const host = shortUrl(p.llm?.openai?.baseUrl || p.llm?.anthropic?.baseUrl) || "未配置";
+    const head = numbers ? `${String(i + 1).padStart(2)}. ` : "    ";
+    const star = n === cfg.defaultProfile ? "●" : "○";
+    console.log(`  ${head}${star} ${padW(n, 14)} ${padW(models, 42)} ${padW(host, 28)} ${maskKey(p.apiKey)}${p.desc ? `  # ${p.desc}` : ""}`);
+  });
+}
+
+async function editProfile(cfg, name, { engine } = {}) {
+  const p = cfg.profiles[name];
+  const protoOrder = engine ? [ADAPTERS[engine].protocol, ...PROTOS.filter(x => x !== ADAPTERS[engine].protocol)] : PROTOS;
+  const engineOrder = engine ? [engine, ...ENGINES.filter(e => e !== engine)] : ENGINES;
+  const ask = (label, cur) => askLine(`${label}${cur ? ` [${cur}]` : ""}: `);
+  console.log(`\n填写配置 "${name}" —— 回车跳过 / 保持原值\n`);
+  const key = await ask("API Key", p.apiKey ? maskKey(p.apiKey) : "");
+  if (key) p.apiKey = key;
+  const desc = await ask("备注（套餐/账号，可空）", p.desc ?? "");
+  if (desc) p.desc = desc;
+  for (const proto of protoOrder) {
+    const v = await ask(`${proto} baseUrl`, p.llm[proto].baseUrl);
+    if (v) p.llm[proto].baseUrl = v;
   }
-  const em = cfg.engines[engine];
-  const proto = ADAPTERS[engine].protocol;
-  if (!cfg.llm[proto]?.baseUrl) {
-    const v = await askLine(`${proto} 协议地址 (baseUrl): `);
-    if (v) cfg.llm[proto] = { baseUrl: v };
-  }
-  if (em && !em.model) {
-    const v = await askLine(`${engine} 的模型名: `);
-    if (v) em.model = v;
-    if (engine === "claude-code" && !em.smallModel) {
-      const sv = await askLine("claude-code 的小模型 (smallModel，可回车跳过): ");
-      if (sv) em.smallModel = sv;
+  for (const e of engineOrder) {
+    const em = p.engines[e];
+    if (e === "claude-code") {
+      for (const [label, k] of [["主模型（opus 档，必填）", "opusModel"], ["sonnet 档（可空）", "sonnetModel"], ["haiku 档（后台小任务，可空）", "haikuModel"]]) {
+        const v = await ask(`claude-code ${label}`, em[k]);
+        if (v) em[k] = v;
+      }
+    } else {
+      const v = await ask(`${e} 模型名`, em.model);
+      if (v) em.model = v;
     }
   }
   saveConfig(cfg);
-  console.log("");
-  return cfg;
+  console.log(`✓ 已保存配置 "${name}"`);
+  if (engine) {
+    const miss = missingFor(p, engine);
+    if (miss.length) console.log(`  · 还缺 ${miss.join(" / ")}，${engine} 暂时跑不起来`);
+  }
+}
+
+async function addProfile(cfg, { engine, name } = {}) {
+  const names = Object.keys(cfg.profiles);
+  const blank = names.find(n => isBlankProfile(cfg.profiles[n]));
+  const fallback = blank ?? uniqueName(cfg.profiles, `key${names.length + 1}`);
+  let n = (name ?? await askLine(`配置名称（区分套餐/账号，比如 ark-coding、ark-包月）[回车=${fallback}]: `)).trim();
+  if (!n) n = fallback;
+
+  if (cfg.profiles[n] && !isBlankProfile(cfg.profiles[n])) {
+    console.log(`"${n}" 已存在，没动它。要改请用 e ${n}`);
+    return null;
+  }
+  if (cfg.profiles[n]) {
+    // 复用占位空配置
+  } else if (blank) {
+    // 把空占位改名成新名字
+    const ordered = {};
+    for (const [k, v] of Object.entries(cfg.profiles)) ordered[k === blank ? n : k] = v;
+    cfg.profiles = ordered;
+    if (cfg.defaultProfile === blank) cfg.defaultProfile = n;
+  } else {
+    cfg.profiles[n] = normalizeProfile({});
+  }
+  saveConfig(cfg);
+
+  await editProfile(cfg, n, { engine });
+
+  cfg.defaultProfile = n;
+  saveConfig(cfg);
+  console.log(`✓ 以后就用 "${n}" 了\n`);
+  return n;
+}
+
+async function renameProfile(cfg, from, to) {
+  if (!to || to === from) return false;
+  if (cfg.profiles[to]) { console.log(`"${to}" 已存在，换个名字`); return false; }
+  const ordered = {};
+  for (const [k, v] of Object.entries(cfg.profiles)) ordered[k === from ? to : k] = v;
+  cfg.profiles = ordered;
+  if (cfg.defaultProfile === from) cfg.defaultProfile = to;
+  saveConfig(cfg);
+  console.log(`✓ "${from}" → "${to}"`);
+  return true;
+}
+
+function removeProfile(cfg, name) {
+  if (Object.keys(cfg.profiles).length <= 1) { console.log("至少留一套配置"); return false; }
+  delete cfg.profiles[name];
+  if (cfg.defaultProfile === name) cfg.defaultProfile = Object.keys(cfg.profiles)[0];
+  saveConfig(cfg);
+  console.log(`✓ 已删除 "${name}"`);
+  return true;
+}
+
+async function pickProfile(cfg) {
+  for (;;) {
+    const names = Object.keys(cfg.profiles);
+    console.log("");
+    listProfiles(cfg);
+    const ans = (await askLine(`\n回车=退出 / 序号=用这套 / a=新增 / e=改 / r=改名 / d=删: `)).trim();
+    if (!ans) return null;
+    const [op, given] = ans.split(/\s+/);
+
+    // 直接输序号（或名字）＝用这套
+    if (/^\d+$/.test(op) || cfg.profiles[op]) {
+      const pick = /^\d+$/.test(op) ? names[Number(op) - 1] : op;
+      if (!pick) { console.log("没有这个序号"); continue; }
+      cfg.defaultProfile = pick;
+      saveConfig(cfg);
+      console.log(`✓ 以后就用 "${pick}" 了`);
+      return pick;
+    }
+    if (op === "a") {
+      const n = await addProfile(cfg);
+      if (n) return n;
+      continue;
+    }
+    if (!["e", "r", "d"].includes(op)) {
+      console.log("按提示输入：序号 / a / e / r / d");
+      continue;
+    }
+    // 两步：先问要动哪一套
+    const raw = given ?? (await askLine(`${op === "e" ? "改" : op === "r" ? "改名" : "删"}哪一套（序号）: `)).trim();
+    const target = /^\d+$/.test(raw) ? names[Number(raw) - 1] : raw;
+    if (!target || !cfg.profiles[target]) { console.log("没有这个序号"); continue; }
+
+    if (op === "e") { await editProfile(cfg, target); continue; }
+    if (op === "r") {
+      const nn = (await askLine(`新名字 [${target}]: `)).trim();
+      await renameProfile(cfg, target, nn);
+      continue;
+    }
+    const yes = (await askLine(`确认删除 "${target}"？[y/N]: `)).toLowerCase();
+    if (yes === "y" || yes === "yes") removeProfile(cfg, target);
+  }
+}
+
+async function switchProfile(name) {
+  const cfg = loadConfig();
+  const names = Object.keys(cfg.profiles);
+  if (name) {
+    if (!cfg.profiles[name]) {
+      console.error(`没有 "${name}"，可用：${names.join(" / ")}`);
+      process.exit(1);
+    }
+    cfg.defaultProfile = name;
+    saveConfig(cfg);
+    console.log(`✓ 以后就用 "${name}" 了`);
+    return name;
+  }
+  if (!process.stdin.isTTY) { listProfiles(cfg); return null; }
+  return pickProfile(cfg);
 }
 
 async function onboard() {
   console.log("=== ai-kit 首次设置 ===\n");
   const tpl = readFileSync(join(ROOT, "config.example.json"), "utf8");
-  saveConfig(JSON.parse(tpl));
+  saveConfig(normalizeConfig(JSON.parse(tpl)));
   console.log(`已生成配置 ${CONFIG_PATH}\n`);
 
   const cfg = loadConfig();
@@ -428,8 +661,16 @@ async function onboard() {
     console.log(`下载安装 ${engine} ...`);
     await a.install();
   }
-  console.log(`\n引擎相关配置（API Key / baseUrl / 模型名）在首次启动对应引擎时引导补全。`);
-  return setDefault(cfg, engine);
+  cfg.defaultEngine = engine;
+  saveConfig(cfg);
+
+  if (process.stdin.isTTY) {
+    const yes = (await askLine(`\n现在配一套 API Key 吗？（之后随时 ai-kit switch 增删切换）[Y/n]: `)).toLowerCase();
+    if (yes === "" || yes === "y" || yes === "yes") await addProfile(cfg, { engine });
+  } else {
+    console.log(`\nAPI Key / baseUrl / 模型名在首次启动对应引擎时引导补全。`);
+  }
+  return cfg;
 }
 
 function installedGlobal() {
@@ -475,7 +716,19 @@ async function install(engineArg) {
   }
 }
 
-async function start(engineArg) {
+function parseArgs(args) {
+  let engine;
+  const passthrough = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (!engine && ENGINES.includes(a)) { engine = a; continue; }
+    passthrough.push(a);
+  }
+  return { engine, passthrough };
+}
+
+async function start(cliArgs = []) {
+  const { engine: engineArg, passthrough } = parseArgs(cliArgs);
   let cfg = existsSync(CONFIG_PATH) ? loadConfig() : await onboard();
   cfg = await maybeAlias(cfg);
   const engine = engineArg ?? cfg.defaultEngine;
@@ -486,32 +739,39 @@ async function start(engineArg) {
     await a.install();
   }
   await autoUpdate(engine);
-  const em0 = cfg.engines?.[engine];
-  if (!cfg.apiKey || !em0?.model || !cfg.llm?.[a.protocol]?.baseUrl) {
-    cfg = await promptMissing(cfg, engine);
+
+  const pname = cfg.defaultProfile;
+  const miss = missingFor(cfg.profiles[pname], engine);
+  if (miss.length) {
+    if (!process.stdin.isTTY) {
+      console.error(`配置 "${pname}" 缺 ${miss.join(" / ")}，在终端里跑一次 ai-kit switch 补全`);
+      process.exit(1);
+    }
+    console.log(`配置 "${pname}" 在 ${engine} 下缺 ${miss.join(" / ")}`);
+    await editProfile(cfg, pname, { engine });
   }
   let apiKey, ep;
-  try { ({ apiKey, ep } = resolveEndpoint(cfg, engine)); }
+  try { ({ apiKey, ep } = resolveEndpoint(cfg, engine, pname)); }
   catch (e) { console.error(e.message); process.exit(1); }
+
   for (const e of ENGINES) {
     const ae = ADAPTERS[e];
     if (!ae.installed()) continue;
-    try {
-      const r = resolveEndpoint(cfg, e);
-      await ae.applyConfig(e, r.ep, r.apiKey);
-    } catch {
-      console.log(`  · ${e} 配置不全，跳过（沿用该引擎已有配置）`);
+    let r = null;
+    for (const n of [...new Set([pname, cfg.defaultProfile])]) {
+      try { r = resolveEndpoint(cfg, e, n); break; } catch { }
     }
+    if (!r) { console.log(`  · ${e} 在这套配置里不全，跳过（沿用该引擎已有配置）`); continue; }
+    try { await ae.applyConfig(e, r.ep, r.apiKey); } catch { }
   }
-  const fp = llmFingerprint(ep, apiKey);
+
+  const fp = `${pname}|${llmFingerprint(ep, apiKey)}`;
   if ((cfg.applied?.[engine] ?? "") !== fp) {
     if (a.restartDaemon?.()) console.log(`  ✓ 已重启 ${engine} 的常驻服务，旧 key/地址已失效`);
     cfg.applied = { ...(cfg.applied ?? {}), [engine]: fp };
     saveConfig(cfg);
   }
   await autoSync(cfg);
-  const argv = process.argv.slice(2);
-  const passthrough = argv.slice(1).filter(x => !ENGINES.includes(x));
   let mode = cfg.permissionMode ?? "bypass";
   if (process.stdin.isTTY && (cfg.permissionMode === undefined || cfg.permissionMode === null)) {
     const answer = (await askLine(`权限模式 [回车=bypass 全自动 / 输入 n=默认审批]: `)).toLowerCase();
@@ -523,7 +783,7 @@ async function start(engineArg) {
     ...(mode === "bypass" ? (a.bypassArgs ?? []) : []),
     ...(a.launchArgs?.(ep) ?? []),
   ];
-  console.log(`LLM: ${ep.model} @ ${ep.baseUrl}\n`);
+  console.log(`LLM: [${pname}] ${ep.model} @ ${ep.baseUrl}\n`);
   const bin = a.nativeBin?.() || a.cmd;
   const child = sh(bin, [...extra, ...passthrough], { stdio: "inherit", env: { ...process.env, AI_KIT_API_KEY: apiKey } });
   process.exit(child.status ?? 0);
@@ -542,9 +802,13 @@ async function status() {
     const ok = a.installed();
     let extra = "";
     if (cfg) {
-      try { const r = resolveEndpoint(cfg, e); extra = `  ${r.ep.model} (${a.protocol})`; } catch { extra = "  ⚠ 配置不全"; }
+      try { const r = resolveEndpoint(cfg, e, cfg.defaultProfile); extra = `  ${r.ep.model} (${a.protocol})`; } catch { extra = "  ⚠ 默认配置不全"; }
     }
     console.log(`${ok ? "●" : "○"} ${e.padEnd(12)} ${ok ? "已安装" : "未安装"}${extra}${cfg?.defaultEngine === e ? "  ← 默认" : ""}`);
+  }
+  if (cfg) {
+    console.log("");
+    listProfiles(cfg);
   }
   console.log(`\nconfig: ${CONFIG_PATH}`);
   const src = skillsSrc(cfg ?? {});
@@ -576,11 +840,15 @@ const [cmd, ...rest] = process.argv.slice(2);
 switch (cmd) {
   case undefined:
   case "start":
-    await start(rest[0]);
+    await start(rest);
+    break;
+  case "switch":
+  case "use":
+  case "profile":
+    if (await switchProfile(rest[0])) await start(rest.slice(1));
     break;
   case "change_engine":
   case "change-engine":
-  case "use":
     await changeEngine();
     break;
   case "init":
@@ -594,6 +862,6 @@ switch (cmd) {
     await status();
     break;
   default:
-    if (ENGINES.includes(cmd)) await start(cmd);
-    else console.log(`用法: ai-kit [start|claude-code|codex|change_engine|install|status]`);
+    if (ENGINES.includes(cmd)) await start([cmd, ...rest]);
+    else console.log(`用法: ai-kit [switch <名字>|claude-code|codex|change_engine|install|status]`);
 }

@@ -1,21 +1,28 @@
 {
   "defaultEngine": "claude-code",
-  "apiKey": "",
-  "llm": {
-    "anthropic": {
-      "baseUrl": ""
-    },
-    "openai": {
-      "baseUrl": ""
-    }
-  },
-  "engines": {
-    "claude-code": {
-      "model": "",
-      "smallModel": ""
-    },
-    "codex": {
-      "model": ""
+  "defaultProfile": "default",
+  "profiles": {
+    "default": {
+      "desc": "",
+      "apiKey": "",
+      "llm": {
+        "anthropic": {
+          "baseUrl": ""
+        },
+        "openai": {
+          "baseUrl": ""
+        }
+      },
+      "engines": {
+        "claude-code": {
+          "opusModel": "",
+          "sonnetModel": "",
+          "haikuModel": ""
+        },
+        "codex": {
+          "model": ""
+        }
+      }
     }
   }
 }

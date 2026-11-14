@@ -1,47 +1,52 @@
 # ai-coding-kit
 
-一份 config + 一个 skills 仓库，通吃 Claude Code / Codex。
+一份 config + 一个 skills 仓库，通吃 Claude Code / Codex。API Key 存多套，切一次就记住。
 
-## 用法
-
-```bash
-npm i -g github:skrandy/ai-coding-kit --allow-git=root   # 全局安装
-ai-kit                                  # 任何目录直接运行
-
-# 首次运行：选引擎（没装自动下载）→ 设默认 → 问一次全局 alias
-# 之后运行：首次启动某引擎时引导补全它的 apiKey/baseUrl/模型名，答完永久保存
-# 之后运行：自动查更新 + 自动 pull 每个 skill 的 git 仓库 + 链 skills + 启动默认引擎
-```
+## 装
 
 ```bash
-ai-kit claude-code     # 临时启动指定引擎
-ai-kit change_engine   # 切换默认引擎
-ai-kit                 # 首次启动选一次权限模式并记住：回车=bypass 全自动（默认），n=默认审批
-ai-kit status          # 查看状态（含每个 skill 的 git 分支/脏文件）
-ai-kit sync            # 手动拉一遍 skills 的 git 仓库并重链（不启动引擎）
+npm i -g github:skrandy/ai-coding-kit --allow-git=root
 ```
 
-## .config.json
+## 用
 
-`.config.json` —— **每次 `ai-kit` 启动都会把这里的 LLM 配置重新推给各引擎**，改完直接重启 `ai-kit` 就生效：
+```bash
+ai-kit          # 用当前配置启动
+ai-kit switch   # 换 key / 加 key，选完就是它了
+```
+
+`ai-kit claude-code` 临时换引擎，`ai-kit change_engine` 换默认引擎，`ai-kit status` 看状态。
+
+## 配置
+
+`.config.json`，一套 key 一段，`defaultProfile` 指当前用的那套：
 
 ```json
 {
   "defaultEngine": "codex",
-  "apiKey": "填你的key",
-  "llm": {
-    "anthropic": { "baseUrl": "填anthropic兼容地址" },
-    "openai": { "baseUrl": "填openai兼容地址" }
-  },
-  "engines": {
-    "claude-code": { "model": "主模型", "smallModel": "小模型" },
-    "codex": { "model": "模型" }
+  "defaultProfile": "ark-包月",
+  "profiles": {
+    "ark-包月": {
+      "apiKey": "…",
+      "llm": {
+        "openai": { "baseUrl": "…" },
+        "anthropic": { "baseUrl": "…" }
+      },
+      "engines": {
+        "codex": { "model": "…" },
+        "claude-code": { "opusModel": "…", "sonnetModel": "…", "haikuModel": "…" }
+      }
+    }
   }
 }
 ```
 
+claude-code 只有三档，主模型就是 `opusModel`：启动时 `--model` 和 `ANTHROPIC_MODEL` 都取它，同时它也写进 `ANTHROPIC_DEFAULT_OPUS_MODEL`，`/model` 选 opus 时用的是同一个。`sonnetModel` / `haikuModel` 对应 `ANTHROPIC_DEFAULT_SONNET/HAIKU_MODEL`，留空就跟随厂商默认；haiku 档还负责后台小任务，旧变量 `ANTHROPIC_SMALL_FAST_MODEL` 已废弃。
+
+每次启动都会把当前这套推给各引擎。老配置首次运行自动迁移，`defaultProfile` 一般不用手改。
+
 ## 依赖
 
-- node >= 23 + npm
+node >= 23 + npm
 
 MIT
